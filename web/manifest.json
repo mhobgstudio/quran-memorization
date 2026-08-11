@@ -1,11 +1,11 @@
 {
-    "name": "quran_memorization",
-    "short_name": "quran_memorization",
+    "name": "Hifz Planner",
+    "short_name": "Hifz Planner",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0F766E",
+    "theme_color": "#0F766E",
+    "description": "Estimate exactly when you will complete memorizing the Quran (604-page Madani mushaf).",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
