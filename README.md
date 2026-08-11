@@ -1,0 +1,64 @@
+# Hifz Planner (قرآن memorization calculator)
+
+Estimates exactly when you will complete memorizing the Quran, based on:
+
+- **Current page** — page you are currently memorizing (counted as in progress)
+- **Daily rate** — lines per day **or** fraction of a page per day (live conversion between both)
+- **Rest days** — optional weekdays you do not memorize
+
+Uses the standard **Madani mushaf: 604 pages, 15 lines per page**.
+
+## Example
+
+At page 150, memorizing 10 lines/day (⅔ page), every day:
+→ **315 pages remaining · 473 study sessions · finish in ~1 year 4 months**
+
+## Features
+
+- Live calculation as you type — no submit button
+- Page stepper (+/−), number field, and slider (1–604)
+- Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence
+- Rest-day chips (study 6/7, 5/7, etc. — finish date accounts for skipped days)
+- Exact finish date, calendar days, study sessions, and progress bar
+- Dark + light theme, Material 3
+
+## Run
+
+```bash
+flutter pub get
+flutter run            # interactive (pick your device)
+```
+
+## Build for each platform
+
+| Platform | Command | Output |
+|----------|---------|--------|
+| Linux | `flutter build linux --release` | `build/linux/x64/release/bundle/quran_memorization` |
+| Android | `flutter build apk --release` | `build/app/outputs/flutter-apk/app-release.apk` |
+| iOS (macOS only) | `flutter build ios` | `build/ios/iphoneos/` |
+| macOS | `flutter build macos --release` | `build/macos/Build/Products/Release/quran_memorization.app` |
+| Windows (Windows only) | `flutter build windows --release` | `build/windows/x64/runner/Release/` |
+| Web | `flutter build web` | `build/web/` (serve with any static server) |
+
+Mobile notes:
+- Android APK is signed with the debug key by default (fine for personal installs).
+- iOS requires a Mac with Xcode + an Apple developer account to deploy to a device.
+
+## Test
+
+```bash
+flutter test
+```
+
+The calculation core (`lib/memorization_calc.dart`) is pure Dart with 20 unit
+tests covering validation, rest-day scheduling, lines↔pages conversion, and
+date math (verified against a brute-force calendar reference). Three widget
+tests cover the live UI behavior.
+
+## How it works
+
+`MemorizationPlan.compute()` walks the calendar day by day from today,
+consuming `pagesPerDay` of work on each non-rest weekday, until the remaining
+pages reach zero — returning the exact finish date, the number of study
+sessions, and the number of calendar days. It is correct for fractional rates
+and arbitrary rest-day patterns.
