@@ -596,7 +596,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     MushafPage page,
     double bandHeight,
   ) {
-    const lineHeight = 1.85;
+    // The real printed page is dense horizontally and airy vertically;
+    // a 1.5 line-height lets the width fit bind so lines fill ~95% of the
+    // width and the inter-word gaps stay tight like the printed mushaf.
+    const lineHeight = 1.5;
     // Natural width of the widest text line at a reference size of 100,
     // including the minimum inter-word gaps the justification needs.
     var widest100 = 0.0;
@@ -615,12 +618,22 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             ? _rosetteWidth(t.text, 100)
             : _measureText(t.text, style);
       }
-      w += (tokens.length - 1) * 34; // 0.34 em minimum gap at size 100
+      // 0.10 em minimum gap — the printed Madani mushaf sets words very
+      // tight (measured gap ≈ 0.09× word width), so the stretch must stay
+      // small; most of the line width is words, not whitespace.
+      w += (tokens.length - 1) * 10;
       widest100 = math.max(widest100, w);
     }
     final heightFit = ((height - bandHeight - 16) / (15 * lineHeight)) * 0.96;
-    final widthFit = widest100 > 0 ? (width / widest100) * 0.93 : 26.0;
-    return math.max(12.0, math.min(26.0, math.min(heightFit, widthFit)));
+    // widest100 is measured at font size 100, so scale back up (x100) and
+    // fill the whole line: the inter-word stretch stays minimal and lines
+    // stay as dense as the printed page. Shorter lines get a little more
+    // gap, exactly like the printed mushaf, where sparse lines are airier.
+    final widthFit = widest100 > 0 ? (width / widest100) * 100 * 1.0 : 26.0;
+    // No small hard cap: let the width fit bind so the text actually fills
+    // the line (a low cap left lines ~70% full and spaceBetween stretched
+    // the gaps into airy rivers — the printed page is dense).
+    return math.max(12.0, math.min(46.0, math.min(heightFit, widthFit)));
   }
 
   /// The page header of the printed mushaf: an ornamented band whose center
