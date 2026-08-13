@@ -283,6 +283,22 @@ void main() {
     expect(find.textContaining('1.5×'), findsWidgets);
   });
 
+  testWidgets('speed selector renders whole speeds without .toInt() artifacts',
+      (tester) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(1, 5, audio));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('speed-selector')));
+    await tester.pumpAndSettle();
+
+    // Regression: the label once rendered as "1.toInt()×" instead of "1×".
+    expect(find.text('1×'), findsWidgets);
+    expect(find.text('2×'), findsWidgets);
+    expect(find.textContaining('.toInt()'), findsNothing);
+    expect(find.text('0.5×'), findsOneWidget);
+  });
+
   testWidgets('reciter picker changes the recitation URLs', (tester) async {
     final audio = FakeQuranAudio();
     await tester.pumpWidget(harness(1, 5, audio));

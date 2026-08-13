@@ -204,6 +204,62 @@ String formatDate(DateTime date) {
       '${months[date.month - 1]} ${date.day}, ${date.year}';
 }
 
+/// Converts a Gregorian [date] to the Hijri (Islamic) date as a display
+/// string, e.g. "17 Safar 1448 AH" for August 13, 2026.
+///
+/// Uses the standard tabular/Umm al-Qura style arithmetic (the same
+/// formula used by many calendar widgets) so it needs no dependencies.
+/// The result is approximate to within a day of the civil Hijri calendar.
+String hijriDateString(DateTime date) {
+  // Julian day number for the civil Gregorian date.
+  final y = date.year;
+  final m = date.month;
+  final d = date.day;
+  final a = (14 - m) ~/ 12;
+  final jd = d +
+      ((153 * (m + 12 * a - 3) + 2) ~/ 5) +
+      365 * (y + 4800 - a) +
+      ((y + 4800 - a) ~/ 4) -
+      ((y + 4800 - a) ~/ 100) +
+      ((y + 4800 - a) ~/ 400) -
+      32045;
+
+  // Convert Julian day to Hijri (tabular Islamic calendar).
+  final l = jd - 1948440 + 10632;
+  final n = (l - 1) ~/ 10631;
+  var l2 = l - 10631 * n + 354;
+  final j =
+      ((10985 - l2) ~/ 5316) *
+          ((50 * l2) ~/ 17719) +
+          (l2 ~/ 5670) * ((43 * l2) ~/ 15238);
+  l2 =
+      l2 -
+          ((30 - j) ~/ 15) * ((17719 * j) ~/ 50) -
+          (j ~/ 16) * ((15238 * j) ~/ 43) +
+          29;
+  final month = (24 * l2) ~/ 709;
+  final day = l2 - (709 * month) ~/ 24;
+  final year = 30 * n + j - 30;
+
+  const months = [
+    'Muharram',
+    'Safar',
+    "Rabi' al-Awwal",
+    "Rabi' al-Thani",
+    'Jumada al-Ula',
+    'Jumada al-Akhirah',
+    'Rajab',
+    "Sha'ban",
+    'Ramadan',
+    'Shawwal',
+    'Dhu al-Qa\u02bbdah',
+    'Dhu al-Hijjah',
+  ];
+  final safeMonth = month.clamp(1, 12);
+  final safeDay = day.clamp(1, 30);
+  return '$safeDay ${months[safeMonth - 1]} $year AH';
+}
+
 /// Humanizes a number of calendar days into a short phrase:
 /// "today", "tomorrow", "in 42 days", "in 3 months", "in 2 years 2 months".
 String humanizeDays(int days) {

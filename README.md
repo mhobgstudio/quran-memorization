@@ -51,6 +51,16 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
 - **Meanings view** — the translate button shows every ayah of the page with
   the English meaning (Saheeh International, bundled offline) beneath the
   Uthmani text; today's ayahs stay highlighted
+- **Mark today's portion done** — the planner shows today's exact portion
+  (page + lines) with a one-tap button to record it; see your **day streak**,
+  total sessions, and lines memorized, with undo
+- **Saved plan** — your page, daily rate, direction, rest days, and start
+  date are remembered across app restarts, so a refresh restores your plan
+- **Theme toggle** — the app bar switches between system / light / dark,
+  persisted
+- **Plan start date** — pick when your plan begins (default today) and the
+  results card shows the **Hijri date** of your finish alongside the
+  Gregorian one
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

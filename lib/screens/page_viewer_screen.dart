@@ -1534,7 +1534,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           DropdownMenuItem(
                             value: v,
                             child: Text(
-                              v == v.roundToDouble() ? '$v.toInt()×' : '$v×',
+                              v == v.roundToDouble()
+                                  ? '${v.toInt()}×'
+                                  : '$v×',
                             ),
                           ),
                       ],

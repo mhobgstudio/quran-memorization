@@ -190,6 +190,17 @@ void main() {
       expect(humanizeDays(730), 'in 2 years');
       expect(humanizeDays(790), 'in 2 years 2 months');
     });
+
+    test('hijriDateString returns a plausible Hijri date', () {
+      // Ramadan 1447 began around Feb 18, 2026; mid-March is inside it.
+      final s = hijriDateString(DateTime(2026, 3, 12));
+      expect(s, contains('Ramadan'));
+      expect(s, contains('1447'));
+      expect(s, contains('AH'));
+      // Ramadan 1448 begins around Feb 8, 2027; late February is inside it.
+      expect(hijriDateString(DateTime(2027, 2, 24)), contains('Ramadan'));
+      expect(hijriDateString(DateTime(2027, 2, 24)), contains('1448'));
+    });
   });
 
   group('memorizing from the last page (backward)', () {

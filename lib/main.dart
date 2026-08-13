@@ -5,21 +5,57 @@ import 'memorization_calc.dart';
 import 'screens/page_viewer_screen.dart';
 import 'services/audio_settings.dart';
 import 'services/audio_unit_controller.dart';
+import 'services/memorization_log.dart';
+import 'services/planner_settings.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Restore the user's last-used reciter/speed/repeat before the first frame
-  // so the audio bar opens with their saved preferences.
-  final settings = await AudioSettings.load();
-  runApp(QuranMemorizationApp(unit: AudioUnitController(settings: settings)));
+  // so the audio bar opens with their saved preferences, and restore the
+  // saved planner inputs (page, rate, rest days, theme) and completion log.
+  final audio = await AudioSettings.load();
+  final planner = await PlannerSettings.load();
+  final log = await MemorizationLog.load();
+  runApp(
+    QuranMemorizationApp(
+      unit: AudioUnitController(settings: audio),
+      plannerSettings: planner,
+      log: log,
+    ),
+  );
 }
 
-class QuranMemorizationApp extends StatelessWidget {
-  const QuranMemorizationApp({super.key, this.unit});
+class QuranMemorizationApp extends StatefulWidget {
+  const QuranMemorizationApp({
+    super.key,
+    this.unit,
+    this.plannerSettings = const PlannerSettings(),
+    this.log = const MemorizationLog(),
+  });
 
   /// Shared app-level audio unit so today's portion keeps playing after the
   /// mushaf viewer is closed; when null (tests) no mini player is shown.
   final AudioUnitController? unit;
+
+  /// Restored planner inputs applied as the planner's initial state.
+  final PlannerSettings plannerSettings;
+
+  /// Restored completion history (mark-today-done + streak).
+  final MemorizationLog log;
+
+  @override
+  State<QuranMemorizationApp> createState() => _QuranMemorizationAppState();
+}
+
+class _QuranMemorizationAppState extends State<QuranMemorizationApp> {
+  late ThemeMode _themeMode = widget.plannerSettings.themeMode;
+
+  void _setThemeMode(ThemeMode mode) {
+    if (mode == _themeMode) return;
+    setState(() => _themeMode = mode);
+    // Persist the choice (fire-and-forget).
+    widget.plannerSettings.copyWith(themeMode: mode).save();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +65,7 @@ class QuranMemorizationApp extends StatelessWidget {
     return MaterialApp(
       title: 'Hifz Planner',
       debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -48,7 +85,13 @@ class QuranMemorizationApp extends StatelessWidget {
           isDense: true,
         ),
       ),
-      home: PlannerScreen(unit: unit),
+      home: PlannerScreen(
+        unit: widget.unit,
+        settings: widget.plannerSettings,
+        log: widget.log,
+        themeMode: _themeMode,
+        onThemeModeChanged: _setThemeMode,
+      ),
     );
   }
 }
@@ -56,28 +99,57 @@ class QuranMemorizationApp extends StatelessWidget {
 enum RateMode { lines, fraction }
 
 class PlannerScreen extends StatefulWidget {
-  const PlannerScreen({super.key, this.unit});
+  const PlannerScreen({
+    super.key,
+    this.unit,
+    this.settings = const PlannerSettings(),
+    this.log = const MemorizationLog(),
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
+  });
 
   /// Shared audio unit backing the persistent mini player (optional; tests
   /// omit it).
   final AudioUnitController? unit;
+
+  /// Restored planner inputs applied as this screen's initial state.
+  final PlannerSettings settings;
+
+  /// Restored completion history shown in the "today's portion" card.
+  final MemorizationLog log;
+
+  /// Current app theme; the toggle in the app bar switches it.
+  final ThemeMode themeMode;
+
+  /// Called when the user picks a different theme.
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
 
   @override
   State<PlannerScreen> createState() => _PlannerScreenState();
 }
 
 class _PlannerScreenState extends State<PlannerScreen> {
-  final _pageController = TextEditingController(text: '1');
-  final _rateController = TextEditingController(text: '10');
-  RateMode _rateMode = RateMode.lines;
-  MemorizationDirection _direction = MemorizationDirection.forward;
-  final Set<int> _restWeekdays = {};
+  late final TextEditingController _pageController;
+  late final TextEditingController _rateController;
+  late RateMode _rateMode;
+  late MemorizationDirection _direction;
+  late final Set<int> _restWeekdays;
+  DateTime? _startDate;
+  late MemorizationLog _log;
 
   @override
   void initState() {
     super.initState();
-    _pageController.addListener(_onChanged);
-    _rateController.addListener(_onChanged);
+    _pageController = TextEditingController(text: '${widget.settings.page}')
+      ..addListener(_onChanged);
+    _rateController = TextEditingController(
+      text: _trimInput(widget.settings.rate),
+    )..addListener(_onChanged);
+    _rateMode = widget.settings.rateIsLines ? RateMode.lines : RateMode.fraction;
+    _direction = widget.settings.direction;
+    _restWeekdays = {...widget.settings.restWeekdays};
+    _startDate = widget.settings.startDate;
+    _log = widget.log;
     widget.unit?.addListener(_onUnitChanged);
   }
 
@@ -93,7 +165,30 @@ class _PlannerScreenState extends State<PlannerScreen> {
     if (mounted) setState(() {});
   }
 
-  void _onChanged() => setState(() {});
+  void _onChanged() {
+    setState(() {});
+    _saveSettings();
+  }
+
+  /// Persists the current planner inputs (fire-and-forget) so a page
+  /// refresh restores them.
+  void _saveSettings() {
+    widget.settings
+        .copyWith(
+          page: _page ?? widget.settings.page,
+          rate: _rate ?? widget.settings.rate,
+          rateIsLines: _rateMode == RateMode.lines,
+          direction: _direction,
+          restWeekdays: _restWeekdays,
+          startDate: _startDate,
+        )
+        .save();
+  }
+
+  static String _trimInput(double value) {
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '');
+  }
 
   int? get _page {
     final raw = _pageController.text.trim();
@@ -121,12 +216,14 @@ class _PlannerScreenState extends State<PlannerScreen> {
               currentPage: page,
               linesPerDay: rate,
               restWeekdays: _restWeekdays,
+              startDate: _startDate,
               direction: _direction,
             )
           : MemorizationPlan(
               currentPage: page,
               pagesPerDay: rate,
               restWeekdays: _restWeekdays,
+              startDate: _startDate,
               direction: _direction,
             );
     } on ArgumentError {
@@ -146,6 +243,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
             : 1,
       );
     });
+    _saveSettings();
   }
 
   /// Sets the page field, clamping to the valid range and placing the cursor
@@ -235,6 +333,45 @@ class _PlannerScreenState extends State<PlannerScreen> {
         title: const Text('Hifz Planner'),
         centerTitle: false,
         actions: [
+          PopupMenuButton<ThemeMode>(
+            key: const ValueKey('theme-toggle'),
+            icon: Icon(
+              switch (widget.themeMode) {
+                ThemeMode.light => Icons.light_mode_outlined,
+                ThemeMode.dark => Icons.dark_mode_outlined,
+                ThemeMode.system => Icons.brightness_auto_outlined,
+              },
+            ),
+            tooltip: 'Theme',
+            initialValue: widget.themeMode,
+            onSelected: widget.onThemeModeChanged,
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: ThemeMode.system,
+                child: ListTile(
+                  leading: Icon(Icons.brightness_auto_outlined),
+                  title: Text('System'),
+                  dense: true,
+                ),
+              ),
+              PopupMenuItem(
+                value: ThemeMode.light,
+                child: ListTile(
+                  leading: Icon(Icons.light_mode_outlined),
+                  title: Text('Light'),
+                  dense: true,
+                ),
+              ),
+              PopupMenuItem(
+                value: ThemeMode.dark,
+                child: ListTile(
+                  leading: Icon(Icons.dark_mode_outlined),
+                  title: Text('Dark'),
+                  dense: true,
+                ),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.nightlight_outlined),
             tooltip: 'Nightly review — last 3 days',
@@ -324,6 +461,52 @@ class _PlannerScreenState extends State<PlannerScreen> {
                           color: scheme.onSurfaceVariant,
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Plan starts',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                Text(
+                                  _startDate == null
+                                      ? 'Today (${formatDate(DateTime.now())})'
+                                      : formatDate(_startDate!),
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton.icon(
+                            icon: const Icon(Icons.calendar_today_outlined),
+                            label: Text(
+                              _startDate == null ? 'Change date' : 'Change',
+                            ),
+                            onPressed: _pickStartDate,
+                          ),
+                          if (_startDate != null)
+                            IconButton(
+                              icon: const Icon(Icons.restart_alt),
+                              tooltip: 'Start today instead',
+                              onPressed: () {
+                                setState(() => _startDate = null);
+                                _saveSettings();
+                              },
+                            ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -349,6 +532,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                         selected: {_rateMode},
                         onSelectionChanged: (selection) {
                           setState(() => _rateMode = selection.first);
+                          _saveSettings();
                         },
                       ),
                       const SizedBox(height: 12),
@@ -423,6 +607,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                                     _restWeekdays.remove(entry.$1);
                                   }
                                 });
+                                _saveSettings();
                               },
                             ),
                         ],
@@ -437,6 +622,8 @@ class _PlannerScreenState extends State<PlannerScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
+                _todayCard(plan, scheme),
                 const SizedBox(height: 16),
                 _resultsCard(plan, scheme),
                 const SizedBox(height: 16),
@@ -523,6 +710,178 @@ class _PlannerScreenState extends State<PlannerScreen> {
     return raw.isNotEmpty &&
         (double.tryParse(raw.replaceAll(',', '.')) == null ||
             double.parse(raw.replaceAll(',', '.')) <= 0);
+  }
+
+  Future<void> _pickStartDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _startDate ?? DateTime(now.year, now.month, now.day),
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 10),
+      helpText: 'When does your plan start?',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _startDate = DateTime(picked.year, picked.month, picked.day));
+    _saveSettings();
+  }
+
+  /// The current day's portion (page + lines) as it would be memorized now,
+  /// or null when the plan inputs are invalid.
+  (int, double)? _todayPortion(MemorizationPlan? plan) {
+    if (plan == null) return null;
+    return (plan.currentPage, _effectiveLinesPerDay());
+  }
+
+  void _markTodayDone(MemorizationPlan? plan) {
+    final portion = _todayPortion(plan);
+    if (portion == null) return;
+    final (page, lines) = portion;
+    final now = DateTime.now();
+    setState(() {
+      _log = _log.record(
+        date: DateTime(now.year, now.month, now.day),
+        page: page,
+        lines: lines,
+        direction: _direction,
+      );
+    });
+    _log.save();
+  }
+
+  void _undoToday() {
+    final now = DateTime.now();
+    setState(() {
+      _log = _log.remove(DateTime(now.year, now.month, now.day));
+    });
+    _log.save();
+  }
+
+  /// Daily completion card: mark today's portion done, see the streak, and
+  /// browse recent sessions.
+  Widget _todayCard(MemorizationPlan? plan, ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final portion = _todayPortion(plan);
+    final doneToday = _log.isDoneOn(DateTime.now());
+    final latest = _log.latest;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final String title;
+    final String subtitle;
+    if (portion == null) {
+      title = 'Mark today’s portion done';
+      subtitle = 'Complete the plan above to enable this.';
+    } else if (doneToday) {
+      title = 'Done today — barakallahu feek!'; // ‎may Allah bless you
+      subtitle = 'Page ${portion.$1} · ${_trim(portion.$2)} lines memorized.';
+    } else {
+      title = 'Today’s portion: page ${portion.$1}';
+      subtitle = '${_trim(portion.$2)} lines — memorize it, then mark it done.';
+    }
+
+    final streak = _log.streak;
+    final hasHistory = _log.totalSessions > 0;
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  doneToday ? Icons.check_circle : Icons.flag_outlined,
+                  color: doneToday
+                      ? scheme.primary
+                      : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            if (portion != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: doneToday
+                        ? OutlinedButton.icon(
+                            key: const ValueKey('undo-today'),
+                            icon: const Icon(Icons.undo),
+                            label: const Text('Undo'),
+                            onPressed: _undoToday,
+                          )
+                        : FilledButton.icon(
+                            key: const ValueKey('mark-done'),
+                            icon: const Icon(Icons.check),
+                            label: const Text('Mark today’s portion done'),
+                            onPressed: () => _markTodayDone(plan),
+                          ),
+                  ),
+                ],
+              ),
+            ],
+            if (hasHistory || streak > 0) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _statBlock('$streak', 'day streak', scheme),
+                  _statBlock('${_log.totalSessions}', 'sessions', scheme),
+                  _statBlock(
+                    _trim(_log.totalLines),
+                    'lines memorized',
+                    scheme,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (latest != null &&
+                  !latest.date.isBefore(DateTime(today.year, today.month, today.day - 6)))
+                Text(
+                  'Last session: ${_shortDate(latest.date)} — '
+                  'page ${latest.page} · ${_trim(latest.lines)} lines.',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _shortDate(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (d == today) return 'today';
+    if (d == DateTime(today.year, today.month, today.day - 1)) {
+      return 'yesterday';
+    }
+    return '${months[d.month - 1]} ${d.day}';
   }
 
   Widget _sectionCard({required String title, required Widget child}) {
@@ -638,11 +997,19 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 fontWeight: FontWeight.w700,
               ),
             ),
+            Text(
+              '${hijriDateString(result.finishDate)}'
+              '${isDone ? '' : ' · ${humanizeDays(result.calendarDays)}'}' ,
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onPrimaryContainer.withValues(alpha: 0.7),
+              ),
+            ),
             const SizedBox(height: 4),
             Text(
               isDone
                   ? 'Alhamdulillah — the remaining ${_trim(remaining)} page${remaining == 1 ? '' : 's'} fit in one session.'
-                  : '${humanizeDays(result.calendarDays)} · starting today, ${plan.restWeekdays.isEmpty ? 'every day' : 'on your study days'}',
+                  : '${plan.restWeekdays.isEmpty ? 'every day' : 'on your study days'} · '
+                        'starting ${_startDate == null ? 'today' : formatDate(_startDate!)}',
               style: textTheme.bodyMedium?.copyWith(
                 color: scheme.onPrimaryContainer.withValues(alpha: 0.8),
               ),
