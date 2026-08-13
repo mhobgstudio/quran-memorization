@@ -55,6 +55,7 @@ void main() {
       repeat: 3,
       reciter: Reciter.husary,
       speed: 1.5,
+      echo: false,
     );
     return unit;
   }
@@ -75,6 +76,7 @@ void main() {
       repeat: 3,
       reciter: Reciter.husary,
       speed: 1.5,
+      echo: false,
     );
 
     expect(unit.playing, isTrue);
@@ -129,6 +131,78 @@ void main() {
     expect(unit.playing, isFalse);
     expect(unit.hasUnit, isFalse);
     expect(audio.stopCalls, 1);
+  });
+
+  test('echo mode plays one ayah at a time and auto-pauses', () async {
+    final audio = _FakeAudio();
+    final unit = AudioUnitController(audio: audio);
+    await unit.play(
+      urls: const ['u1', 'u2', 'u3'],
+      label: 'L',
+      settings: 'S',
+      page: 1,
+      linesPerDay: 5,
+      direction: MemorizationDirection.forward,
+      repeat: 3,
+      reciter: Reciter.alafasy,
+      speed: 1.0,
+      echo: true,
+    );
+    expect(unit.echo, isTrue);
+    expect(audio.lastUrls, const ['u1']);
+    expect(unit.ayahIndex, 0);
+    expect(unit.totalAyahs, 3);
+
+    // Ayah 1 finishes -> auto-pause, next is ayah 2.
+    audio.finish();
+    await Future<void>.delayed(Duration.zero);
+    expect(unit.playing, isFalse);
+    expect(unit.ayahIndex, 1);
+    expect(unit.hasUnit, isTrue, reason: 'mini player stays dismissible');
+
+    await unit.toggle();
+    expect(audio.lastUrls, const ['u2']);
+
+    audio.finish();
+    await Future<void>.delayed(Duration.zero);
+    await unit.toggle();
+    expect(audio.lastUrls, const ['u3']);
+
+    // After the last ayah it wraps to the first.
+    audio.finish();
+    await Future<void>.delayed(Duration.zero);
+    expect(unit.ayahIndex, 0);
+  });
+
+  test('echo degrades infinite repeat to a single play per ayah', () async {
+    final audio = _FakeAudio();
+    final unit = AudioUnitController(audio: audio);
+    await unit.play(
+      urls: const ['u1', 'u2'],
+      label: 'L',
+      settings: 'S',
+      page: 1,
+      linesPerDay: 5,
+      direction: MemorizationDirection.forward,
+      repeat: 0,
+      reciter: Reciter.alafasy,
+      speed: 1.0,
+      echo: true,
+    );
+    expect(audio.lastUrls, const ['u1']);
+    expect(audio.lastRepeat, 1);
+  });
+
+  test('setEcho stops a playing unit and flips the mode', () async {
+    final audio = _FakeAudio();
+    final unit = await started(audio: audio);
+    expect(unit.echo, isFalse);
+    expect(unit.playing, isTrue);
+
+    await unit.setEcho(true);
+    expect(unit.echo, isTrue);
+    expect(unit.playing, isFalse);
+    expect(audio.pauseCalls, 1);
   });
 
   test('unit completion clears the playing state', () async {

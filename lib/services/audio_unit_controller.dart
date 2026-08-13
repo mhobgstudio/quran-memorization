@@ -12,10 +12,16 @@ import 'audio_player.dart';
 ///
 /// Owns a single [QuranAudio] instance for the whole app lifetime; the mushaf
 /// viewer binds to it instead of creating its own player.
+///
+/// In [echo] mode the unit plays one ayah at a time and auto-pauses after
+/// each one (listen-and-repeat): the next [toggle] plays the following ayah.
 class AudioUnitController extends ChangeNotifier {
   AudioUnitController({QuranAudio? audio})
     : _audio = audio ?? JustQuranAudio() {
     _sub = _audio.onCompleted.listen((_) {
+      if (_echo && _urls.isNotEmpty) {
+        _ayahIndex = (_ayahIndex + 1) % _urls.length;
+      }
       _playing = false;
       notifyListeners();
     });
@@ -59,6 +65,15 @@ class AudioUnitController extends ChangeNotifier {
   double _speed = 1.0;
   double get speed => _speed;
 
+  bool _echo = false;
+  bool get echo => _echo;
+
+  /// Index (within the unit's ayahs) of the ayah that plays next in echo mode.
+  int _ayahIndex = 0;
+  int get ayahIndex => _ayahIndex;
+
+  int get totalAyahs => _urls.length;
+
   /// Whether a unit has been started (playing, paused, or just finished) and
   /// the mini player should be visible.
   bool get hasUnit => _label.isNotEmpty;
@@ -77,6 +92,7 @@ class AudioUnitController extends ChangeNotifier {
     required int repeat,
     required Reciter reciter,
     required double speed,
+    required bool echo,
   }) async {
     _urls = urls;
     _label = label;
@@ -87,15 +103,11 @@ class AudioUnitController extends ChangeNotifier {
     _repeat = repeat;
     _reciter = reciter;
     _speed = speed;
+    _echo = echo;
+    _ayahIndex = 0;
     _error = null;
     await _audio.setSpeed(speed);
-    try {
-      await _audio.play(urls: urls, repeat: repeat);
-      _playing = true;
-    } catch (_) {
-      _playing = false;
-      _error = "Couldn't play audio — check your connection.";
-    }
+    await _playUnit();
     notifyListeners();
   }
 
@@ -107,27 +119,53 @@ class AudioUnitController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Pauses a playing unit or (re)starts a paused one.
+  /// Pauses a playing unit or (re)starts a paused one (the next ayah in echo
+  /// mode, the whole unit otherwise).
   Future<void> toggle() async {
     if (_playing) {
       await _audio.pause();
       _playing = false;
     } else {
-      await _restart();
+      await _playUnit();
     }
     notifyListeners();
   }
 
-  Future<void> _restart() async {
-    if (_urls.isEmpty) return;
+  /// Plays the current unit: the whole unit, or just the current ayah in echo
+  /// mode (repeated [repeat] times; an infinite loop is treated as one play).
+  Future<void> _playUnit() async {
+    if (_urls.isEmpty) {
+      _playing = false;
+      return;
+    }
     _error = null;
     try {
-      await _audio.play(urls: _urls, repeat: _repeat);
+      if (_echo) {
+        final i = _ayahIndex % _urls.length;
+        await _audio.play(
+          urls: [_urls[i]],
+          repeat: _repeat > 0 ? _repeat : 1,
+        );
+      } else {
+        await _audio.play(urls: _urls, repeat: _repeat);
+      }
       _playing = true;
     } catch (_) {
       _playing = false;
       _error = "Couldn't play audio — check your connection.";
     }
+  }
+
+  /// Toggles echo mode (listen-and-repeat). Turning it on while playing stops
+  /// the current playback so the next play starts ayah-by-ayah.
+  Future<void> setEcho(bool echo) async {
+    if (_echo == echo) return;
+    _echo = echo;
+    if (_playing) {
+      await _audio.pause();
+      _playing = false;
+    }
+    notifyListeners();
   }
 
   /// Applies a new playback speed immediately (even mid-unit); the next

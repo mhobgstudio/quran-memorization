@@ -44,6 +44,7 @@ Future<AudioUnitController> startedUnit() async {
     repeat: 3,
     reciter: Reciter.husary,
     speed: 1.5,
+    echo: false,
   );
   return unit;
 }

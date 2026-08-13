@@ -69,6 +69,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   int _repeat = 3;
   Reciter _reciter = Reciter.alafasy;
   double _speed = 1.0;
+  bool _echo = false;
+  int _ayahIndex = 0;
+  bool _started = false;
   StreamSubscription<void>? _audioSub;
 
   @override
@@ -88,7 +91,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       _audio = widget.audio ?? JustQuranAudio();
       _audioSub = _audio.onCompleted.listen((_) {
         if (!mounted) return;
-        setState(() => _playing = false);
+        setState(() {
+          _playing = false;
+          if (_echo) {
+            final total = _todayUrls().length;
+            if (total > 0) _ayahIndex = (_ayahIndex + 1) % total;
+          }
+        });
       });
     }
     _load();
@@ -211,13 +220,14 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         urls: urls,
         label: '${meta.arabicLong} · page $_page',
         settings:
-            '${_reciter.label} · $_speedLabel · repeat ${_repeat == 0 ? '∞' : '×$_repeat'}',
+            '${_reciter.label} · $_speedLabel · repeat ${_repeat == 0 ? '∞' : '×$_repeat'}${_echo ? ' · echo' : ''}',
         page: _page,
         linesPerDay: widget.linesPerDay,
         direction: widget.direction,
         repeat: _repeat,
         reciter: _reciter,
         speed: _speed,
+        echo: _echo,
       );
       return;
     }
@@ -231,7 +241,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     if (urls.isEmpty) return;
     setState(() => _audioError = null);
     try {
-      await _audio.play(urls: urls, repeat: _repeat);
+      if (_echo) {
+        _started = true;
+        final i = _ayahIndex % urls.length;
+        await _audio.play(urls: [urls[i]], repeat: _echoRepeat);
+      } else {
+        await _audio.play(urls: urls, repeat: _repeat);
+      }
       if (!mounted) return;
       setState(() => _playing = true);
     } catch (_) {
@@ -255,7 +271,25 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       _page = (_page + delta).clamp(1, MushafData.totalPages).toInt();
       _playing = false;
       _audioError = null;
+      _ayahIndex = 0;
+      _started = false;
     });
+  }
+
+  /// Echo-mode repeat count: an infinite loop makes no sense for one-ayah
+  /// playback, so it degrades to a single play.
+  int get _echoRepeat => _repeat > 0 ? _repeat : 1;
+
+  void _onEchoChanged(bool sel) {
+    if (sel == _echo) return;
+    final unit = widget.unit;
+    setState(() => _echo = sel);
+    if (unit != null) {
+      unit.setEcho(sel);
+    } else if (_playing) {
+      _audio.stop();
+      _playing = false;
+    }
   }
 
   @override
@@ -700,12 +734,20 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final enabled = _todayLineCount() > 0;
     final playing = _isPlaying;
     final error = _playError;
+    final unit = widget.unit;
+    final echoActive = _echo && (unit != null ? unit.hasUnit : _started);
+    final pos = unit != null ? unit.ayahIndex : _ayahIndex;
+    final total = unit != null ? unit.totalAyahs : _todayUrls().length;
     final title =
-        error ?? (playing ? "Playing today's portion" : "Play today's portion");
+        error ??
+        (echoActive
+            ? 'Echo — ayah ${pos + 1} of $total'
+            : (playing ? "Playing today's portion" : "Play today's portion"));
     final repeatText = _repeat == 0 ? '∞ (until stopped)' : '×$_repeat';
     final ayahCount = _todayUrls().length;
-    final subtitle =
-        'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · $_speedLabel · ${_reciter.label}';
+    final subtitle = echoActive
+        ? 'echo · ayah ${pos + 1} of $total · $_speedLabel · ${_reciter.label}'
+        : 'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · $_speedLabel · ${_reciter.label}';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -720,7 +762,11 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             children: [
               IconButton(
                 icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                tooltip: playing ? 'Pause' : "Play today's portion",
+                tooltip: playing
+                    ? 'Pause'
+                    : (echoActive
+                          ? 'Next ayah (listen & repeat)'
+                          : "Play today's portion"),
                 onPressed: enabled ? _togglePlay : null,
               ),
               Expanded(
@@ -845,6 +891,24 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           _audio.setSpeed(speed);
                         }
                       },
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Echo', style: textTheme.labelMedium),
+                    const SizedBox(width: 8),
+                    FilterChip(
+                      key: const ValueKey('echo-toggle'),
+                      label: const Text('listen & repeat'),
+                      tooltip:
+                          'Auto-pause after each ayah so you can repeat '
+                          'it aloud; press play for the next ayah',
+                      selected: _echo,
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: _onEchoChanged,
                     ),
                   ],
                 ),

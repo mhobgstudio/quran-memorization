@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quran_memorization/data/mushaf_page.dart';
@@ -63,6 +65,7 @@ class FakeQuranAudio implements QuranAudio {
   bool paused = false;
   bool stopped = false;
   double? lastSpeed;
+  final _completed = StreamController<void>.broadcast();
 
   @override
   Future<void> play({required List<String> urls, required int repeat}) async {
@@ -83,7 +86,10 @@ class FakeQuranAudio implements QuranAudio {
   Future<void> dispose() async {}
 
   @override
-  Stream<void> get onCompleted => const Stream<void>.empty();
+  Stream<void> get onCompleted => _completed.stream;
+
+  /// Emits a completion event, as if the current unit finished.
+  void finish() => _completed.add(null);
 }
 
 Widget harness(
@@ -333,6 +339,33 @@ void main() {
     await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();
     expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('echo mode plays one ayah at a time and auto-pauses', (
+    tester,
+  ) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(1, 5, audio));
+
+    // Turn echo on and play: only the first ayah is queued (5 lines today).
+    await tester.tap(find.byKey(const ValueKey('echo-toggle')));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump();
+    expect(audio.playedUrls!.length, 1);
+    expect(find.textContaining('Echo — ayah 1 of 5'), findsOneWidget);
+
+    // Auto-pause after the ayah completes and advance to the next.
+    audio.finish();
+    await tester.pump();
+    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+    expect(find.textContaining('Echo — ayah 2 of 5'), findsOneWidget);
+
+    // The next play queues only the next ayah again.
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump();
+    expect(audio.playedUrls!.length, 1);
+    expect(find.byIcon(Icons.pause), findsOneWidget);
   });
 
   testWidgets('audio dedupes boundary ayahs shared by adjacent lines', (
