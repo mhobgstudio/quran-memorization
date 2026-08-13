@@ -25,9 +25,12 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
   and ornamented surah banners on Juz Amma pages. Today's lines are
   highlighted, direction-aware (first lines for 1 → 604, last lines for
   604 → 1)
-- **Audio unit playback** — play today's highlighted lines' ayahs (Alafasy,
-  EveryAyah CDN) with repeat ×1/×3/×5/∞ (until stopped) and pause; streams
-  from the internet
+- **Audio unit playback** — play today's highlighted ayahs with repeat
+  ×1/×3/×5/∞ (until stopped), speed 0.5×–2×, and a reciter picker (Alafasy,
+  Husary murattal/mujawwad, Minshawi, Sudais); streams from the internet
+- **Persistent mini player** — the unit keeps playing after you close the
+  mushaf viewer: the planner shows a mini player bar to pause/resume, dismiss
+  it, or tap to reopen the viewer right at that page with the same settings
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

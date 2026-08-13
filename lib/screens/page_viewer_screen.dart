@@ -7,6 +7,7 @@ import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
 import '../memorization_calc.dart' show MemorizationDirection;
 import '../services/audio_player.dart';
+import '../services/audio_unit_controller.dart';
 
 /// Displays one page of the mushaf exactly as printed: a header band with the
 /// surah name, juz and page number, the 15 justified Uthmani lines, ayah-end
@@ -22,6 +23,7 @@ class PageViewerScreen extends StatefulWidget {
     this.direction = MemorizationDirection.forward,
     this.mushaf,
     this.audio,
+    this.unit,
   });
 
   /// Initial page to show (1..604).
@@ -36,8 +38,14 @@ class PageViewerScreen extends StatefulWidget {
   /// Pre-loaded mushaf layout; when null it is loaded from the asset.
   final MushafData? mushaf;
 
-  /// Audio backend; when null a just_audio player is created.
+  /// Audio backend; when null a just_audio player is created (only used
+  /// when [unit] is null).
   final QuranAudio? audio;
+
+  /// Shared app-level audio unit; when provided, playback state lives here so
+  /// today's unit keeps playing after this screen is closed (persistent mini
+  /// player on the planner).
+  final AudioUnitController? unit;
 
   @override
   State<PageViewerScreen> createState() => _PageViewerScreenState();
@@ -67,18 +75,43 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   void initState() {
     super.initState();
     _page = widget.page.clamp(1, MushafData.totalPages).toInt();
-    _audio = widget.audio ?? JustQuranAudio();
-    _audioSub = _audio.onCompleted.listen((_) {
-      if (!mounted) return;
-      setState(() => _playing = false);
-    });
+    final unit = widget.unit;
+    if (unit != null) {
+      // Bind to the shared unit: inherit its last-used settings and mirror
+      // its playing/error state. The unit owns the audio and outlives this
+      // screen so playback continues after closing the viewer.
+      _repeat = unit.repeat;
+      _reciter = unit.reciter;
+      _speed = unit.speed;
+      unit.addListener(_onUnitChanged);
+    } else {
+      _audio = widget.audio ?? JustQuranAudio();
+      _audioSub = _audio.onCompleted.listen((_) {
+        if (!mounted) return;
+        setState(() => _playing = false);
+      });
+    }
     _load();
   }
 
+  void _onUnitChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Effective playback state: the shared unit's when bound, local otherwise.
+  bool get _isPlaying => widget.unit?.playing ?? _playing;
+
+  String? get _playError => widget.unit?.error ?? _audioError;
+
   @override
   void dispose() {
-    _audioSub?.cancel();
-    _audio.dispose();
+    final unit = widget.unit;
+    if (unit != null) {
+      unit.removeListener(_onUnitChanged);
+    } else {
+      _audioSub?.cancel();
+      _audio.dispose();
+    }
     super.dispose();
   }
 
@@ -165,6 +198,29 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   }
 
   Future<void> _togglePlay() async {
+    final unit = widget.unit;
+    if (unit != null) {
+      if (unit.playing) {
+        await unit.pause();
+        return;
+      }
+      final urls = _todayUrls();
+      if (urls.isEmpty) return;
+      final meta = _mushaf!.surahMeta(_currentPage.surah);
+      await unit.play(
+        urls: urls,
+        label: '${meta.arabicLong} · page $_page',
+        settings:
+            '${_reciter.label} · $_speedLabel · repeat ${_repeat == 0 ? '∞' : '×$_repeat'}',
+        page: _page,
+        linesPerDay: widget.linesPerDay,
+        direction: widget.direction,
+        repeat: _repeat,
+        reciter: _reciter,
+        speed: _speed,
+      );
+      return;
+    }
     if (_playing) {
       await _audio.pause();
       if (!mounted) return;
@@ -189,7 +245,12 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
   void _goToPage(int delta) {
     // Stop playback so the viewer never plays a stale unit on a new page.
-    _audio.stop();
+    final unit = widget.unit;
+    if (unit != null) {
+      unit.stop();
+    } else {
+      _audio.stop();
+    }
     setState(() {
       _page = (_page + delta).clamp(1, MushafData.totalPages).toInt();
       _playing = false;
@@ -637,9 +698,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
   Widget _audioBar(ColorScheme scheme, TextTheme textTheme) {
     final enabled = _todayLineCount() > 0;
+    final playing = _isPlaying;
+    final error = _playError;
     final title =
-        _audioError ??
-        (_playing ? "Playing today's portion" : "Play today's portion");
+        error ?? (playing ? "Playing today's portion" : "Play today's portion");
     final repeatText = _repeat == 0 ? '∞ (until stopped)' : '×$_repeat';
     final ayahCount = _todayUrls().length;
     final subtitle =
@@ -657,8 +719,8 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
           Row(
             children: [
               IconButton(
-                icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
-                tooltip: _playing ? 'Pause' : "Play today's portion",
+                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                tooltip: playing ? 'Pause' : "Play today's portion",
                 onPressed: enabled ? _togglePlay : null,
               ),
               Expanded(
@@ -670,7 +732,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style:
-                          (_audioError != null
+                          (error != null
                                   ? textTheme.bodySmall?.copyWith(
                                       color: scheme.error,
                                     )
@@ -739,9 +801,14 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                       ],
                       onChanged: (reciter) {
                         if (reciter == null || reciter == _reciter) return;
-                        if (_playing) {
-                          _audio.stop();
-                          _playing = false;
+                        if (_isPlaying) {
+                          final unit = widget.unit;
+                          if (unit != null) {
+                            unit.pause();
+                          } else {
+                            _audio.stop();
+                            _playing = false;
+                          }
                         }
                         setState(() => _reciter = reciter);
                       },
@@ -771,7 +838,12 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                       onChanged: (speed) {
                         if (speed == null || speed == _speed) return;
                         setState(() => _speed = speed);
-                        _audio.setSpeed(speed);
+                        final unit = widget.unit;
+                        if (unit != null) {
+                          unit.setSpeed(speed);
+                        } else {
+                          _audio.setSpeed(speed);
+                        }
                       },
                     ),
                   ],

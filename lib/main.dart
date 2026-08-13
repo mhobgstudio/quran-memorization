@@ -3,13 +3,18 @@ import 'package:flutter/services.dart';
 
 import 'memorization_calc.dart';
 import 'screens/page_viewer_screen.dart';
+import 'services/audio_unit_controller.dart';
 
 void main() {
-  runApp(const QuranMemorizationApp());
+  runApp(QuranMemorizationApp(unit: AudioUnitController()));
 }
 
 class QuranMemorizationApp extends StatelessWidget {
-  const QuranMemorizationApp({super.key});
+  const QuranMemorizationApp({super.key, this.unit});
+
+  /// Shared app-level audio unit so today's portion keeps playing after the
+  /// mushaf viewer is closed; when null (tests) no mini player is shown.
+  final AudioUnitController? unit;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +43,7 @@ class QuranMemorizationApp extends StatelessWidget {
           isDense: true,
         ),
       ),
-      home: const PlannerScreen(),
+      home: PlannerScreen(unit: unit),
     );
   }
 }
@@ -46,7 +51,11 @@ class QuranMemorizationApp extends StatelessWidget {
 enum RateMode { lines, fraction }
 
 class PlannerScreen extends StatefulWidget {
-  const PlannerScreen({super.key});
+  const PlannerScreen({super.key, this.unit});
+
+  /// Shared audio unit backing the persistent mini player (optional; tests
+  /// omit it).
+  final AudioUnitController? unit;
 
   @override
   State<PlannerScreen> createState() => _PlannerScreenState();
@@ -64,13 +73,19 @@ class _PlannerScreenState extends State<PlannerScreen> {
     super.initState();
     _pageController.addListener(_onChanged);
     _rateController.addListener(_onChanged);
+    widget.unit?.addListener(_onUnitChanged);
   }
 
   @override
   void dispose() {
+    widget.unit?.removeListener(_onUnitChanged);
     _pageController.dispose();
     _rateController.dispose();
     super.dispose();
+  }
+
+  void _onUnitChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onChanged() => setState(() {});
@@ -148,6 +163,22 @@ class _PlannerScreenState extends State<PlannerScreen> {
           page: _page ?? 1,
           linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
           direction: _direction,
+          unit: widget.unit,
+        ),
+      ),
+    );
+  }
+
+  /// Reopens the mushaf viewer at the page and settings of the playing unit.
+  void _openUnitViewer() {
+    final unit = widget.unit!;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PageViewerScreen(
+          page: unit.page,
+          linesPerDay: unit.linesPerDay,
+          direction: unit.direction,
+          unit: unit,
         ),
       ),
     );
@@ -184,6 +215,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
           ),
         ],
       ),
+      bottomNavigationBar: _miniPlayer(scheme),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -377,6 +409,76 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 _resultsCard(plan, scheme),
                 const SizedBox(height: 16),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Persistent mini player for the shared audio unit: lets the user pause /
+  /// resume today's portion, dismiss it, or tap to reopen the mushaf viewer.
+  Widget? _miniPlayer(ColorScheme scheme) {
+    final unit = widget.unit;
+    if (unit == null || !unit.hasUnit) return null;
+    final textTheme = Theme.of(context).textTheme;
+    final fg = scheme.onInverseSurface;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        child: Material(
+          color: scheme.inverseSurface,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            key: const ValueKey('mini-player'),
+            borderRadius: BorderRadius.circular(16),
+            onTap: _openUnitViewer,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    key: const ValueKey('mini-play'),
+                    icon: Icon(unit.playing ? Icons.pause : Icons.play_arrow),
+                    color: fg,
+                    tooltip: unit.playing ? 'Pause' : 'Resume',
+                    onPressed: unit.toggle,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          unit.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: fg,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          unit.settings,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: fg.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('mini-close'),
+                    icon: const Icon(Icons.close),
+                    color: fg,
+                    tooltip: 'Stop and dismiss',
+                    onPressed: unit.stop,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
