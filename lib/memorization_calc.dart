@@ -20,6 +20,15 @@ class PlanResult {
   final DateTime finishDate;
 }
 
+/// Which end of the mushaf memorization starts from.
+enum MemorizationDirection {
+  /// Start at the first page (Surah Al-Fatihah) and work toward page 604.
+  forward,
+
+  /// Start at the last page (commonly Juz Amma) and work back to page 1.
+  backward,
+}
+
 /// Pure calculation logic for a Quran memorization plan.
 ///
 /// Uses the standard Madani mushaf: 604 pages, 15 lines per page.
@@ -30,10 +39,11 @@ class MemorizationPlan {
     required double pagesPerDay,
     Set<int> restWeekdays = const {},
     DateTime? startDate,
-  })  : currentPage = currentPage,
-        pagesPerDay = pagesPerDay,
-        restWeekdays = Set.unmodifiable(restWeekdays),
-        startDate = startDate ?? _todayDate() {
+    this.direction = MemorizationDirection.forward,
+  }) : currentPage = currentPage,
+       pagesPerDay = pagesPerDay,
+       restWeekdays = Set.unmodifiable(restWeekdays),
+       startDate = startDate ?? _todayDate() {
     if (currentPage < 1 || currentPage > totalPages) {
       throw ArgumentError.value(
         currentPage,
@@ -63,6 +73,7 @@ class MemorizationPlan {
     required double linesPerDay,
     Set<int> restWeekdays = const {},
     DateTime? startDate,
+    MemorizationDirection direction = MemorizationDirection.forward,
   }) {
     if (linesPerDay <= 0 || !linesPerDay.isFinite) {
       throw ArgumentError.value(
@@ -76,6 +87,7 @@ class MemorizationPlan {
       pagesPerDay: linesPerDay / linesPerPage,
       restWeekdays: restWeekdays,
       startDate: startDate,
+      direction: direction,
     );
   }
 
@@ -88,6 +100,9 @@ class MemorizationPlan {
   /// The page currently being memorized (1-based). Counted as in progress,
   /// so the remaining work includes it.
   final int currentPage;
+
+  /// Whether memorization runs page 1 → 604 or page 604 → 1.
+  final MemorizationDirection direction;
 
   /// Pages memorized per study day (fractions allowed).
   final double pagesPerDay;
@@ -105,10 +120,18 @@ class MemorizationPlan {
   }
 
   /// Pages still to memorize, counting [currentPage] as incomplete.
-  double get remainingPages => (totalPages - currentPage + 1).toDouble();
+  ///
+  /// Forward: pages [currentPage]..604. Backward: pages [currentPage]..1.
+  double get remainingPages => switch (direction) {
+    MemorizationDirection.forward => (totalPages - currentPage + 1).toDouble(),
+    MemorizationDirection.backward => currentPage.toDouble(),
+  };
 
   /// Pages fully memorized before [currentPage] (for progress display).
-  double get completedPages => (currentPage - 1).toDouble();
+  double get completedPages => switch (direction) {
+    MemorizationDirection.forward => (currentPage - 1).toDouble(),
+    MemorizationDirection.backward => (totalPages - currentPage).toDouble(),
+  };
 
   /// Fraction of the whole mushaf completed before [currentPage].
   double get progressBeforeCurrentPage => completedPages / totalPages;
@@ -155,11 +178,26 @@ class MemorizationPlan {
 /// Formats [date] as e.g. "Tuesday, August 11, 2026" without external deps.
 String formatDate(DateTime date) {
   const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
   const weekdays = [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
     'Sunday',
   ];
   return '${weekdays[date.weekday - 1]}, '

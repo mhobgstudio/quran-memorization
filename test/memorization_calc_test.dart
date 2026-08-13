@@ -41,10 +41,7 @@ void main() {
 
     test('rejects invalid lines per day', () {
       expect(
-        () => MemorizationPlan.fromLinesPerDay(
-          currentPage: 1,
-          linesPerDay: 0,
-        ),
+        () => MemorizationPlan.fromLinesPerDay(currentPage: 1, linesPerDay: 0),
         throwsArgumentError,
       );
     });
@@ -192,6 +189,101 @@ void main() {
       expect(humanizeDays(90), 'in 3 months');
       expect(humanizeDays(730), 'in 2 years');
       expect(humanizeDays(790), 'in 2 years 2 months');
+    });
+  });
+
+  group('memorizing from the last page (backward)', () {
+    test('page 604 backward means all 604 pages remain', () {
+      final plan = MemorizationPlan(
+        currentPage: 604,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+      );
+      expect(plan.remainingPages, 604);
+      expect(plan.completedPages, 0);
+    });
+
+    test('page 1 backward means 1 page remains (current page counted)', () {
+      final plan = MemorizationPlan(
+        currentPage: 1,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+      );
+      expect(plan.remainingPages, 1);
+      expect(plan.completedPages, 603);
+    });
+
+    test('page 300 backward means 300 pages remain', () {
+      final plan = MemorizationPlan(
+        currentPage: 300,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+      );
+      expect(plan.remainingPages, 300);
+    });
+
+    test('backward from 604 finishes identically to forward from 1', () {
+      final start = DateTime(2026, 8, 10);
+      final backward = MemorizationPlan(
+        currentPage: 604,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+        startDate: start,
+      );
+      final forward = MemorizationPlan(
+        currentPage: 1,
+        pagesPerDay: 1,
+        startDate: start,
+      );
+      expect(backward.compute().studyDays, forward.compute().studyDays);
+      expect(backward.compute().calendarDays, forward.compute().calendarDays);
+      expect(backward.compute().finishDate, forward.compute().finishDate);
+    });
+
+    test('backward half page per day from 604 needs 1208 study days', () {
+      final plan = MemorizationPlan(
+        currentPage: 604,
+        pagesPerDay: 0.5,
+        direction: MemorizationDirection.backward,
+        startDate: DateTime(2026, 8, 10),
+      );
+      expect(plan.compute().studyDays, 1208);
+    });
+
+    test('backward with rest days finishes on a study day', () {
+      final plan = MemorizationPlan(
+        currentPage: 604,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+        restWeekdays: const {DateTime.sunday},
+        startDate: DateTime(2026, 8, 10), // Monday
+      );
+      final result = plan.compute();
+      expect(result.studyDays, 604);
+      expect(result.finishDate.weekday, isNot(DateTime.sunday));
+    });
+
+    test('fromLinesPerDay preserves backward direction', () {
+      final plan = MemorizationPlan.fromLinesPerDay(
+        currentPage: 604,
+        linesPerDay: 10,
+        direction: MemorizationDirection.backward,
+      );
+      expect(plan.direction, MemorizationDirection.backward);
+      expect(plan.remainingPages, 604);
+    });
+
+    test('progress getters are symmetric at the midpoint', () {
+      final forward = MemorizationPlan(currentPage: 1, pagesPerDay: 1);
+      final backward = MemorizationPlan(
+        currentPage: 604,
+        pagesPerDay: 1,
+        direction: MemorizationDirection.backward,
+      );
+      expect(
+        forward.progressBeforeCurrentPage,
+        backward.progressBeforeCurrentPage,
+      );
     });
   });
 }

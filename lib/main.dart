@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'memorization_calc.dart';
+import 'screens/page_viewer_screen.dart';
 
 void main() {
   runApp(const QuranMemorizationApp());
@@ -55,6 +56,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
   final _pageController = TextEditingController(text: '1');
   final _rateController = TextEditingController(text: '10');
   RateMode _rateMode = RateMode.lines;
+  MemorizationDirection _direction = MemorizationDirection.forward;
   final Set<int> _restWeekdays = {};
 
   @override
@@ -99,24 +101,59 @@ class _PlannerScreenState extends State<PlannerScreen> {
               currentPage: page,
               linesPerDay: rate,
               restWeekdays: _restWeekdays,
+              direction: _direction,
             )
           : MemorizationPlan(
               currentPage: page,
               pagesPerDay: rate,
               restWeekdays: _restWeekdays,
+              direction: _direction,
             );
     } on ArgumentError {
       return null;
     }
   }
 
-  void _stepPage(int delta) {
-    final current = _page ?? 1;
-    final next = (current + delta).clamp(1, MemorizationPlan.totalPages);
-    _pageController.text = '$next';
+  void _setDirection(MemorizationDirection direction) {
+    if (direction == _direction) return;
+    setState(() {
+      _direction = direction;
+      // Jump to the starting end so the plan reads naturally in the chosen
+      // direction: page 1 for forward, page 604 (the last page) for backward.
+      _setPage(
+        direction == MemorizationDirection.backward
+            ? MemorizationPlan.totalPages
+            : 1,
+      );
+    });
+  }
+
+  /// Sets the page field, clamping to the valid range and placing the cursor
+  /// at the end of the text.
+  void _setPage(int value) {
+    final clamped = value.clamp(1, MemorizationPlan.totalPages);
+    _pageController.text = '$clamped';
     _pageController.selection = TextSelection.collapsed(
       offset: _pageController.text.length,
     );
+  }
+
+  void _openPageViewer() {
+    final pagesPerDay = _rateMode == RateMode.lines
+        ? (_rate ?? 10) / MemorizationPlan.linesPerPage
+        : (_rate ?? (2 / 3));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PageViewerScreen(
+          page: _page ?? 1,
+          linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
+        ),
+      ),
+    );
+  }
+
+  void _stepPage(int delta) {
+    _setPage((_page ?? 1) + delta);
   }
 
   static String _trim(double value) {
@@ -138,6 +175,13 @@ class _PlannerScreenState extends State<PlannerScreen> {
       appBar: AppBar(
         title: const Text('Hifz Planner'),
         centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.menu_book_outlined),
+            tooltip: "View today's page",
+            onPressed: _openPageViewer,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Center(
@@ -151,6 +195,22 @@ class _PlannerScreenState extends State<PlannerScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      SegmentedButton<MemorizationDirection>(
+                        segments: const [
+                          ButtonSegment(
+                            value: MemorizationDirection.forward,
+                            label: Text('From the first page'),
+                          ),
+                          ButtonSegment(
+                            value: MemorizationDirection.backward,
+                            label: Text('From the last page'),
+                          ),
+                        ],
+                        selected: {_direction},
+                        onSelectionChanged: (selection) =>
+                            _setDirection(selection.first),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           IconButton.filledTonal(
@@ -190,20 +250,14 @@ class _PlannerScreenState extends State<PlannerScreen> {
                         max: MemorizationPlan.totalPages.toDouble(),
                         divisions: MemorizationPlan.totalPages - 1,
                         label: '${page ?? 1}',
-                        onChanged: (value) {
-                          _pageController.text =
-                              value.round().clamp(1, 604).toString();
-                          _pageController.selection = TextSelection.collapsed(
-                            offset: _pageController.text.length,
-                          );
-                        },
+                        onChanged: (value) => _setPage(value.round()),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         'Standard Madani mushaf: 604 pages · 15 lines per page',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -239,9 +293,10 @@ class _PlannerScreenState extends State<PlannerScreen> {
                           Expanded(
                             child: TextField(
                               controller: _rateController,
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
                               inputFormatters: [
                                 FilteringTextInputFormatter.allow(
                                   RegExp(r'[0-9.,]'),
@@ -311,8 +366,8 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       Text(
                         'Days you do not memorize. Leave empty to study every day.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -335,10 +390,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
             double.parse(raw.replaceAll(',', '.')) <= 0);
   }
 
-  Widget _sectionCard({
-    required String title,
-    required Widget child,
-  }) {
+  Widget _sectionCard({required String title, required Widget child}) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
@@ -351,10 +403,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
           children: [
             Text(
               title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
             child,
@@ -374,9 +425,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
       ),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: scheme.onSecondaryContainer,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(color: scheme.onSecondaryContainer),
       ),
     );
   }
@@ -412,7 +463,11 @@ class _PlannerScreenState extends State<PlannerScreen> {
     final completed = MemorizationPlan.totalPages - remaining;
     final progress = (completed / MemorizationPlan.totalPages).clamp(0.0, 1.0);
     final isDone = result.finishDate.isBefore(
-      DateTime(plan.startDate.year, plan.startDate.month, plan.startDate.day + 1),
+      DateTime(
+        plan.startDate.year,
+        plan.startDate.month,
+        plan.startDate.day + 1,
+      ),
     );
     final longHaul = result.calendarDays > 730; // more than ~2 years
 
@@ -431,11 +486,18 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 color: scheme.onPrimaryContainer,
               ),
             ),
+            const SizedBox(height: 2),
+            Text(
+              plan.direction == MemorizationDirection.backward
+                  ? 'From the last page · memorizing 604 → 1'
+                  : 'From the first page · memorizing 1 → 604',
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onPrimaryContainer.withValues(alpha: 0.7),
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
-              isDone
-                  ? 'You finish today'
-                  : formatDate(result.finishDate),
+              isDone ? 'You finish today' : formatDate(result.finishDate),
               style: textTheme.headlineSmall?.copyWith(
                 color: scheme.onPrimaryContainer,
                 fontWeight: FontWeight.w700,
@@ -456,28 +518,17 @@ class _PlannerScreenState extends State<PlannerScreen> {
               child: LinearProgressIndicator(
                 value: progress,
                 minHeight: 8,
-                backgroundColor:
-                    scheme.onPrimaryContainer.withValues(alpha: 0.15),
+                backgroundColor: scheme.onPrimaryContainer.withValues(
+                  alpha: 0.15,
+                ),
               ),
             ),
             const SizedBox(height: 12),
             Row(
               children: [
-                _statBlock(
-                  '${_trim(remaining)} pages',
-                  'remaining',
-                  scheme,
-                ),
-                _statBlock(
-                  '${result.studyDays}',
-                  'study sessions',
-                  scheme,
-                ),
-                _statBlock(
-                  '${result.calendarDays}',
-                  'calendar days',
-                  scheme,
-                ),
+                _statBlock('${_trim(remaining)} pages', 'remaining', scheme),
+                _statBlock('${result.studyDays}', 'study sessions', scheme),
+                _statBlock('${result.calendarDays}', 'calendar days', scheme),
               ],
             ),
             if (longHaul) ...[
