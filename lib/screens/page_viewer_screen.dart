@@ -506,10 +506,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     MushafPage page,
     Set<int> highlighted,
   ) {
-    final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     const pad = 12.0;
-    final bandHeight = 40.0;
+    final bandHeight = 46.0;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -525,11 +524,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(pad),
           decoration: BoxDecoration(
             color: dark ? const Color(0xFF211E1A) : const Color(0xFFFFFDF5),
-            border: Border.all(color: scheme.outlineVariant),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.07),
@@ -538,37 +535,43 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               ),
             ],
           ),
-          child: Column(
+          child: Stack(
             children: [
-              _pageHeaderBand(
-                context,
-                page,
-                fontSize: fontSize * 1.1,
-                color: textColor,
+              // The printed page frame: a double rule with ornamental corner
+              // flourishes, drawn just inside the card edge.
+              Positioned.fill(
+                child: CustomPaint(
+                  key: const ValueKey('mushaf-frame'),
+                  painter: _MushafFramePainter(
+                    color: textColor.withValues(alpha: dark ? 0.8 : 0.9),
+                  ),
+                ),
               ),
-              Container(
-                margin: const EdgeInsets.only(bottom: 4),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: textColor.withValues(alpha: 0.55),
-                      width: 1.4,
+              Padding(
+                padding: const EdgeInsets.all(pad),
+                child: Column(
+                  children: [
+                    _pageHeaderBand(
+                      context,
+                      page,
+                      fontSize: fontSize * 1.08,
+                      color: textColor,
                     ),
-                  ),
+                    for (var i = 0; i < page.lines.length; i++)
+                      Expanded(
+                        child: _lineRow(
+                          context,
+                          page.lines[i],
+                          rowIndex: i,
+                          fontSize: fontSize,
+                          color: textColor,
+                          highlighted: highlighted,
+                          isFirstRow: i == 0,
+                        ),
+                      ),
+                  ],
                 ),
               ),
-              for (var i = 0; i < page.lines.length; i++)
-                Expanded(
-                  child: _lineRow(
-                    context,
-                    page.lines[i],
-                    rowIndex: i,
-                    fontSize: fontSize,
-                    color: textColor,
-                    highlighted: highlighted,
-                    isFirstRow: i == 0,
-                  ),
-                ),
             ],
           ),
         );
@@ -577,7 +580,8 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   }
 
   /// Fits the text so all 15 rows plus the band fill the card without
-  /// wrapping: bounded by both the available height and the longest line.
+  /// wrapping: bounded by both the available height and the widest line
+  /// (measured with the real font at a reference size, then scaled).
   double _fitFont(
     double width,
     double height,
@@ -585,40 +589,38 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     double bandHeight,
   ) {
     const lineHeight = 1.85;
-    var maxEm = 6.0;
+    // Natural width of the widest text line at a reference size of 100,
+    // including the minimum inter-word gaps the justification needs.
+    var widest100 = 0.0;
+    final style = TextStyle(
+      fontFamily: _fontFamily,
+      fontSize: 100,
+      height: 1.0,
+    );
     for (final line in page.lines) {
-      switch (line.type) {
-        case MushafLineType.basmala:
-          maxEm = math.max(maxEm, _lineEm(line.text) * 0.9);
-          break;
-        case MushafLineType.text:
-          maxEm = math.max(maxEm, _lineEm(line.text));
-          break;
-        case MushafLineType.surahHeader:
-        case MushafLineType.blank:
-          break;
+      if (line.type != MushafLineType.text) continue;
+      final tokens = _tokenize(line.text);
+      if (tokens.isEmpty) continue;
+      var w = 0.0;
+      for (final t in tokens) {
+        w += t.isRosette
+            ? _rosetteWidth(t.text, 100)
+            : _measureText(t.text, style);
       }
+      w += (tokens.length - 1) * 34; // 0.34 em minimum gap at size 100
+      widest100 = math.max(widest100, w);
     }
     final heightFit = ((height - bandHeight - 16) / (15 * lineHeight)) * 0.96;
-    final widthFit = (width / maxEm) * 0.94;
+    final widthFit = widest100 > 0 ? (width / widest100) * 0.93 : 26.0;
     return math.max(12.0, math.min(26.0, math.min(heightFit, widthFit)));
   }
 
-  /// Rough width of a line in em units (ornaments are wider than letters).
-  static double _lineEm(String text) {
-    var em = 0.0;
-    for (final r in text.runes) {
-      if (r == 0x20) {
-        em += 0.32;
-      } else if (r >= 0x0660 && r <= 0x0669) {
-        em += 1.6; // Arabic-Indic digit → ayah ornament
-      } else {
-        em += 0.55;
-      }
-    }
-    return em;
-  }
-
+  /// The page header of the printed mushaf: an ornamented band whose center
+  /// holds the surah name between two rules, with the page number and juz in
+  /// small corner medallions.
+  /// The page header of the printed mushaf: an ornamented band whose center
+  /// holds the surah name in large calligraphy, with the page number and juz
+  /// in ornate corner medallions and a fine ornamental ribbon along the top.
   Widget _pageHeaderBand(
     BuildContext context,
     MushafPage page, {
@@ -626,53 +628,100 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     required Color color,
   }) {
     final meta = _mushaf!.surahMeta(page.surah);
-    final bandName = meta.arabicLong;
     final cornerStyle = TextStyle(
       fontFamily: _fontFamily,
-      fontSize: fontSize * 0.9,
-      height: 1.3,
+      fontSize: fontSize * 0.72,
+      height: 1.15,
       color: color,
     );
-    return Row(
+    final rule = BorderSide(color: color.withValues(alpha: 0.55), width: 1.2);
+    return Container(
       key: const ValueKey('page-header'),
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Center(
-            child: Text(
-              toArabicIndic(page.page),
-              key: const ValueKey('page-header-number'),
-              style: cornerStyle,
-            ),
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: Center(
-            child: Text(
-              bandName,
-              key: const ValueKey('page-header-surah'),
-              textDirection: TextDirection.rtl,
-              style: TextStyle(
-                fontFamily: _fontFamily,
-                fontSize: fontSize,
-                height: 1.4,
-                color: color,
-                fontWeight: FontWeight.w700,
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      decoration: BoxDecoration(
+        border: Border(top: rule, bottom: rule),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // The ornamental ribbon that runs along the top of the printed
+          // band, a fine repeat of vertical strokes.
+          SizedBox(
+            height: fontSize * 0.52,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _RibbonPainter(
+                color: color.withValues(alpha: 0.95),
               ),
             ),
           ),
-        ),
-        Expanded(
-          child: Center(
-            child: Text(
-              'الجزء ${toArabicIndic(page.juz)}',
-              key: const ValueKey('page-header-juz'),
-              style: cornerStyle,
-            ),
+          const SizedBox(height: 3),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Page number in a corner medallion (top-left of the page).
+              _Medallion(
+                size: fontSize * 1.95,
+                color: color,
+                child: Text(
+                  toArabicIndic(page.page),
+                  key: const ValueKey('page-header-number'),
+                  style: cornerStyle,
+                  textDirection: TextDirection.rtl,
+                ),
+              ),
+              const SizedBox(width: 6),
+              _Diamond(color: color, size: fontSize * 0.3),
+              Expanded(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: color.withValues(alpha: 0.45),
+                          width: 1,
+                        ),
+                        right: BorderSide(
+                          color: color.withValues(alpha: 0.45),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      meta.arabicLong,
+                      key: const ValueKey('page-header-surah'),
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: _fontFamily,
+                        fontSize: fontSize * 1.35,
+                        height: 1.25,
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              _Diamond(color: color, size: fontSize * 0.3),
+              const SizedBox(width: 6),
+              // Juz in a corner medallion (top-right of the page).
+              _Medallion(
+                size: fontSize * 1.95,
+                color: color,
+                child: Text(
+                  'الجزء ${toArabicIndic(page.juz)}',
+                  key: const ValueKey('page-header-juz'),
+                  style: cornerStyle,
+                  textDirection: TextDirection.rtl,
+                ),
+              ),
+            ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -717,9 +766,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         );
       case MushafLineType.text:
         final hi = highlighted.contains(rowIndex);
+        final isBasmala = line.text.trimLeft().startsWith('بِسْمِ');
         return Container(
           key: ValueKey('line-${hi ? 'active' : 'rest'}-$rowIndex'),
-          alignment: Alignment.centerRight,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: hi
               ? BoxDecoration(
@@ -728,56 +777,148 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           .withValues(alpha: dark ? 0.38 : 0.5),
                 )
               : null,
-          child: Text.rich(
-            TextSpan(children: _lineSpans(line.text, fontSize, color)),
-            textDirection: TextDirection.rtl,
-            textAlign: TextAlign.right,
-            softWrap: false,
-            overflow: TextOverflow.clip,
-            style: TextStyle(
-              fontFamily: _fontFamily,
-              fontSize: fontSize,
-              height: 1.85,
-              color: color,
-            ),
-          ),
+          child: isBasmala
+              // The basmala of the printed mushaf is a centred, decorative
+              // line (its ayah-one mark sits in a small rosette), not a
+              // justified full-width line.
+              ? Align(
+                  alignment: Alignment.center,
+                  child: _tokenRow(line.text, fontSize, color),
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) => _justifiedLine(
+                    line.text,
+                    fontSize,
+                    color,
+                  ),
+                ),
         );
     }
   }
 
-  /// Splits a line into text runs and ayah-end ornaments (standalone
-  /// Arabic-Indic digits become the ornamental circles of the printed mushaf).
-  List<InlineSpan> _lineSpans(String text, double fontSize, Color color) {
+  /// Words (and ayah rosettes) of [text] laid out inline in reading order,
+  /// at natural width — used for centred lines such as the basmala.
+  Widget _tokenRow(String text, double fontSize, Color color) {
+    final tokens = _tokenize(text);
+    if (tokens.isEmpty) return const SizedBox.shrink();
+    final style = TextStyle(
+      fontFamily: _fontFamily,
+      fontSize: fontSize,
+      height: 1.85,
+      color: color,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      textDirection: TextDirection.rtl,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        for (var i = 0; i < tokens.length; i++)
+          if (tokens[i].isRosette)
+            _AyahOrnament(
+              key: ValueKey('ayah-ornament-$i'),
+              digits: tokens[i].text,
+              fontSize: fontSize,
+              color: color,
+            )
+          else
+            Text(
+              tokens[i].text,
+              textDirection: TextDirection.rtl,
+              softWrap: false,
+              style: style,
+            ),
+      ],
+    );
+  }
+
+  /// Splits a mushaf line into word tokens and ayah-rosette tokens, keeping
+  /// reading order (a standalone Arabic-Indic digit is the ayah rosette).
+  List<_LineToken> _tokenize(String text) {
     final digitRe = RegExp('^[٠-٩]+\$');
-    final spans = <InlineSpan>[];
-    var ornament = 0;
+    final tokens = <_LineToken>[];
     for (final token in text.split(' ')) {
       final t = token.trim();
       if (t.isEmpty) continue;
-      if (digitRe.hasMatch(t)) {
-        spans.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: _AyahOrnament(
-              key: ValueKey('ayah-ornament-$ornament'),
-              digits: t,
-              fontSize: fontSize,
-              color: color,
-            ),
-          ),
-        );
-        spans.add(
-          const WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: SizedBox(width: 2),
-          ),
-        );
-      } else {
-        spans.add(TextSpan(text: '$t '));
-      }
-      ornament++;
+      tokens.add(_LineToken(t, isRosette: digitRe.hasMatch(t)));
     }
-    return spans;
+    return tokens;
+  }
+
+  /// Width of an ayah rosette (kept in sync with [_AyahOrnament]).
+  double _rosetteWidth(String digits, double fontSize) {
+    final height = fontSize * 1.2;
+    return math.max(
+      height,
+      fontSize * (1.05 + 0.42 * (digits.length - 1)),
+    );
+  }
+
+  double _measureText(String text, TextStyle style) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.rtl,
+    )..layout();
+    return tp.width;
+  }
+
+  /// Renders one full-width mushaf line with the inter-word gaps stretched
+  /// so the text fills the line edge to edge, mirroring the calligraphic
+  /// justification of the printed mushaf. Words run right-to-left; each ayah
+  /// rosette is glued to the word it follows, and the leftover width is
+  /// shared equally between the word groups (mainAxisAlignment spaceBetween,
+  /// so no manual gap arithmetic can drift from the real glyph widths).
+  /// Single-group lines simply sit right-aligned, like the printed page.
+  Widget _justifiedLine(
+    String text,
+    double fontSize,
+    Color color,
+  ) {
+    final tokens = _tokenize(text);
+    if (tokens.isEmpty) return const SizedBox.shrink();
+    final style = TextStyle(
+      fontFamily: _fontFamily,
+      fontSize: fontSize,
+      height: 1.85,
+      color: color,
+    );
+
+    // Group consecutive tokens so a rosette sticks to the word it follows:
+    // each word starts its own group and a rosette joins the word before it.
+    final groups = <List<Widget>>[];
+    for (var i = 0; i < tokens.length; i++) {
+      final t = tokens[i];
+      if (groups.isEmpty || !t.isRosette) groups.add([]);
+      groups.last.add(
+        t.isRosette
+            ? _AyahOrnament(
+                key: ValueKey('ayah-ornament-$i'),
+                digits: t.text,
+                fontSize: fontSize,
+                color: color,
+              )
+            : Text(
+                t.text,
+                textDirection: TextDirection.rtl,
+                softWrap: false,
+                style: style,
+              ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.max,
+      textDirection: TextDirection.rtl,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        for (final group in groups)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            textDirection: TextDirection.rtl,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: group,
+          ),
+      ],
+    );
   }
 
   /// Mid-page surah name in an ornamented band (used when a new surah starts
@@ -797,18 +938,29 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
           bottom: BorderSide(color: color.withValues(alpha: 0.55), width: 1),
         ),
       ),
-      child: Text(
-        line.text,
-        textDirection: TextDirection.rtl,
-        softWrap: false,
-        overflow: TextOverflow.clip,
-        style: TextStyle(
-          fontFamily: _fontFamily,
-          fontSize: fontSize,
-          height: 1.6,
-          color: color,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _Diamond(color: color, size: fontSize * 0.3),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              line.text,
+              textDirection: TextDirection.rtl,
+              softWrap: false,
+              overflow: TextOverflow.clip,
+              style: TextStyle(
+                fontFamily: _fontFamily,
+                fontSize: fontSize,
+                height: 1.6,
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          _Diamond(color: color, size: fontSize * 0.3),
+        ],
       ),
     );
   }
@@ -1041,25 +1193,222 @@ class _AyahOrnament extends StatelessWidget {
       height,
       fontSize * (1.05 + 0.42 * (digits.length - 1)),
     );
-    return Container(
+    return SizedBox(
       width: width,
       height: height,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.only(bottom: 2),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: color.withValues(alpha: 0.9), width: 1.1),
-      ),
-      child: Text(
-        digits,
-        textDirection: TextDirection.rtl,
-        style: TextStyle(
-          fontFamily: 'UthmanicHafs',
-          fontSize: fontSize * 0.68,
-          height: 1,
-          color: color,
+      child: CustomPaint(
+        painter: _RosettePainter(color: color),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              digits,
+              textDirection: TextDirection.rtl,
+              style: TextStyle(
+                fontFamily: 'UthmanicHafs',
+                fontSize: fontSize * 0.68,
+                height: 1,
+                color: color,
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
+}
+
+/// One word or ayah-rosette token of a mushaf line, in reading order.
+class _LineToken {
+  const _LineToken(this.text, {required this.isRosette});
+
+  final String text;
+
+  /// True when this token is a standalone ayah number (rendered as a rosette).
+  final bool isRosette;
+}
+
+/// A small rotated square used as a corner/border ornament.
+class _Diamond extends StatelessWidget {
+  const _Diamond({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: math.pi / 4,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.7), width: 1),
+        ),
+      ),
+    );
+  }
+}
+
+/// The ayah-end rosette of the printed mushaf: a ring of small petals around
+/// the number circle.
+class _RosettePainter extends CustomPainter {
+  const _RosettePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.shortestSide / 2;
+    canvas.drawCircle(
+      center,
+      radius - 1,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..color = color,
+    );
+    final petal = Paint()..color = color;
+    final ring = radius - 3.2;
+    for (var i = 0; i < 8; i++) {
+      final a = i * math.pi / 4;
+      canvas.drawCircle(
+        center + Offset(math.cos(a) * ring, math.sin(a) * ring),
+        1.1,
+        petal,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RosettePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+/// The page frame of the printed mushaf: a double rule with a small diagonal
+/// flourish at each corner.
+/// The page number / juz medallion of the printed mushaf: an ornate
+/// rounded square with a double rule around the number.
+class _Medallion extends StatelessWidget {
+  const _Medallion({
+    required this.size,
+    required this.color,
+    required this.child,
+  });
+
+  final double size;
+  final Color color;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: color.withValues(alpha: 0.85),
+          width: 1.2,
+        ),
+        borderRadius: BorderRadius.circular(size * 0.3),
+      ),
+      child: Container(
+        margin: const EdgeInsets.all(2.4),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: color.withValues(alpha: 0.5),
+            width: 1,
+          ),
+          borderRadius: BorderRadius.circular(size * 0.2),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// The fine ornamental ribbon along the top of the mushaf header band: a
+/// repeating run of short vertical strokes, like the printed page's band.
+class _RibbonPainter extends CustomPainter {
+  const _RibbonPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+    const step = 6.0;
+    final top = 0.6;
+    final bottom = size.height - 0.6;
+    var x = step / 2;
+    while (x < size.width) {
+      canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
+      x += step;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RibbonPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+/// The page frame of the printed mushaf: a sharp-cornered double rule with a
+/// small diagonal flourish at each corner.
+class _MushafFramePainter extends CustomPainter {
+  const _MushafFramePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const inset = 2.5;
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1;
+    final outer = Rect.fromLTWH(
+      inset,
+      inset,
+      size.width - inset * 2,
+      size.height - inset * 2,
+    );
+    canvas.drawRect(outer, stroke);
+    canvas.drawRect(outer.deflate(2.6), stroke);
+
+    // Corner flourishes: short diagonal ticks fanning out from each corner.
+    final tick = Paint()
+      ..color = color
+      ..strokeWidth = 1.1
+      ..strokeCap = StrokeCap.round;
+    const l = 7.0;
+    for (final (sx, sy) in const [
+      (-1.0, -1.0),
+      (1.0, -1.0),
+      (-1.0, 1.0),
+      (1.0, 1.0),
+    ]) {
+      final ox = sx < 0 ? inset : size.width - inset;
+      final oy = sy < 0 ? inset : size.height - inset;
+      canvas.drawLine(
+        Offset(ox, oy),
+        Offset(ox + sx * l, oy + sy * l),
+        tick,
+      );
+      canvas.drawLine(
+        Offset(ox + sx * l * 0.45, oy),
+        Offset(ox, oy + sy * l * 0.45),
+        tick,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MushafFramePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
