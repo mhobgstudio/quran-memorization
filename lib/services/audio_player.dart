@@ -10,6 +10,9 @@ abstract class QuranAudio {
 
   Future<void> stop();
 
+  /// Sets the playback speed (0.5x..2x); persists across plays.
+  Future<void> setSpeed(double speed);
+
   Future<void> dispose();
 
   /// Fires when the current unit finishes playing (all repeats done).
@@ -42,6 +45,9 @@ class JustQuranAudio implements QuranAudio {
 
   @override
   Future<void> stop() => _player.stop();
+
+  @override
+  Future<void> setSpeed(double speed) => _player.setSpeed(speed);
 
   @override
   Future<void> dispose() => _player.dispose();

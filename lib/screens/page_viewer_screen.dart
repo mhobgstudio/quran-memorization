@@ -60,6 +60,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   String? _audioError;
   int _repeat = 3;
   Reciter _reciter = Reciter.alafasy;
+  double _speed = 1.0;
   StreamSubscription<void>? _audioSub;
 
   @override
@@ -149,6 +150,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       }
     }
     return [for (final ref in refs) _ayahUrl(ref)];
+  }
+
+  String get _speedLabel {
+    final s = _speed == _speed.roundToDouble()
+        ? _speed.toInt().toString()
+        : _speed.toString();
+    return '$s×';
   }
 
   String _ayahUrl(String ref) {
@@ -635,7 +643,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final repeatText = _repeat == 0 ? '∞ (until stopped)' : '×$_repeat';
     final ayahCount = _todayUrls().length;
     final subtitle =
-        'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · ${_reciter.label}';
+        'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · $_speedLabel · ${_reciter.label}';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -736,6 +744,34 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           _playing = false;
                         }
                         setState(() => _reciter = reciter);
+                      },
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Speed', style: textTheme.labelMedium),
+                    const SizedBox(width: 8),
+                    DropdownButton<double>(
+                      key: const ValueKey('speed-selector'),
+                      value: _speed,
+                      isDense: true,
+                      underline: const SizedBox.shrink(),
+                      borderRadius: BorderRadius.circular(12),
+                      items: [
+                        for (final v in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+                          DropdownMenuItem(
+                            value: v,
+                            child: Text(
+                              v == v.roundToDouble() ? '$v.toInt()×' : '$v×',
+                            ),
+                          ),
+                      ],
+                      onChanged: (speed) {
+                        if (speed == null || speed == _speed) return;
+                        setState(() => _speed = speed);
+                        _audio.setSpeed(speed);
                       },
                     ),
                   ],

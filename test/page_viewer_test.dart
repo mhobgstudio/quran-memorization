@@ -62,6 +62,7 @@ class FakeQuranAudio implements QuranAudio {
   int? repeat;
   bool paused = false;
   bool stopped = false;
+  double? lastSpeed;
 
   @override
   Future<void> play({required List<String> urls, required int repeat}) async {
@@ -74,6 +75,9 @@ class FakeQuranAudio implements QuranAudio {
 
   @override
   Future<void> stop() async => stopped = true;
+
+  @override
+  Future<void> setSpeed(double speed) async => lastSpeed = speed;
 
   @override
   Future<void> dispose() async {}
@@ -211,6 +215,20 @@ void main() {
     expect(audio.playedUrls, [
       for (var a = 11; a <= 13; a++) ayahAudioUrl(Reciter.alafasy, 2, a),
     ]);
+  });
+
+  testWidgets('speed selector sets the playback speed', (tester) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(1, 5, audio));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('speed-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1.5×').last);
+    await tester.pumpAndSettle();
+
+    expect(audio.lastSpeed, 1.5);
+    expect(find.textContaining('1.5×'), findsWidgets);
   });
 
   testWidgets('reciter picker changes the recitation URLs', (tester) async {
