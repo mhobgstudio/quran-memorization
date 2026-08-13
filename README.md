@@ -46,6 +46,8 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
   with the last 3 days of lines queued for listening, oldest-first (the
   viewer jumps to where the window starts and highlights it); direction-aware,
   so it works whether you memorize from page 1 or from page 604
+- **Fast mushaf navigation** — tap the page number in the viewer to jump
+  straight to any page, or swipe left/right on the page to flip
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

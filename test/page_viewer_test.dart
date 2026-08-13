@@ -556,6 +556,85 @@ void main() {
     expect(audio.playedUrls!.last, ayahAudioUrl(Reciter.alafasy, 2, 5));
   });
 
+  testWidgets('tapping the page number jumps to a typed page', (tester) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    // Tap '1 / 604' -> dialog opens.
+    await tester.tap(find.text('1 / 604'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jump to page'), findsOneWidget);
+
+    // Type 2 and submit.
+    await tester.enterText(find.byType(TextField), '2');
+    await tester.tap(find.text('Go'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Page 2'), findsOneWidget);
+    expect(find.text('2 / 604'), findsOneWidget);
+  });
+
+  testWidgets('page jump rejects invalid input and clamps low values', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('1 / 604'));
+    await tester.pumpAndSettle();
+
+    // Non-numeric input shows an error and keeps the dialog open.
+    await tester.enterText(find.byType(TextField), 'abc');
+    await tester.tap(find.text('Go'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jump to page'), findsOneWidget);
+    expect(find.textContaining('Enter a page number'), findsOneWidget);
+
+    // A below-range value clamps to page 1.
+    await tester.enterText(find.byType(TextField), '0');
+    await tester.tap(find.text('Go'));
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('swiping left/right moves to the next/previous page', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    // Swipe left -> next page.
+    await tester.fling(
+      find.byKey(const ValueKey('mushaf-frame')),
+      const Offset(-350, 0),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Page 2'), findsOneWidget);
+
+    // Swipe right -> previous page.
+    await tester.fling(
+      find.byKey(const ValueKey('mushaf-frame')),
+      const Offset(350, 0),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('swiping forward from page 1 stays on page 1', (tester) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    await tester.fling(
+      find.byKey(const ValueKey('mushaf-frame')),
+      const Offset(350, 0),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsOneWidget);
+  });
+
   testWidgets('keeps the printed mushaf page ratio on a wide screen', (
     tester,
   ) async {

@@ -334,8 +334,11 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     }
   }
 
-  void _goToPage(int delta) {
-    // Stop playback so the viewer never plays a stale unit on a new page.
+  void _goToPage(int delta) => _jumpToPage(_page + delta);
+
+  /// Navigates to an absolute page (clamped to the mushaf), stopping any
+  /// playback so the viewer never plays a stale unit on a new page.
+  void _jumpToPage(int target) {
     final unit = widget.unit;
     if (unit != null) {
       unit.stop();
@@ -343,12 +346,22 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       _audio.stop();
     }
     setState(() {
-      _page = (_page + delta).clamp(1, MushafData.totalPages).toInt();
+      _page = target.clamp(1, MushafData.totalPages).toInt();
       _playing = false;
       _audioError = null;
       _ayahIndex = 0;
       _started = false;
     });
+  }
+
+  /// Opens the page-jump dialog: type a page number (1..604) and press Go,
+  /// or submit directly from the keyboard.
+  Future<void> _openPageJump() async {
+    final int? target = await showDialog<int>(
+      context: context,
+      builder: (_) => _PageJumpDialog(initial: '$_page'),
+    );
+    if (target != null && mounted) _jumpToPage(target);
   }
 
   /// Echo-mode repeat count: an infinite loop makes no sense for one-ayah
@@ -405,13 +418,25 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            // The printed Madani full-view page is 699×1020 (h/w ≈ 1.4592).
-            // Lock the card to that ratio and center it so it never warps
-            // to the screen — it scales, keeping the mushaf's real shape.
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: 0.6853,
-                child: _mushafCard(context, page, highlighted),
+            // Swipe left for the next page, right for the previous one.
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragEnd: (details) {
+                final v = details.primaryVelocity ?? 0;
+                if (v <= -250) {
+                  _goToPage(1);
+                } else if (v >= 250) {
+                  _goToPage(-1);
+                }
+              },
+              // The printed Madani full-view page is 699×1020 (h/w ≈ 1.4592).
+              // Lock the card to that ratio and center it so it never warps
+              // to the screen — it scales, keeping the mushaf's real shape.
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: 0.6853,
+                  child: _mushafCard(context, page, highlighted),
+                ),
               ),
             ),
           ),
@@ -447,9 +472,21 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             tooltip: 'Previous page',
             onPressed: _page > 1 ? () => _goToPage(-1) : null,
           ),
-          Text(
-            '$_page / ${MushafData.totalPages}',
-            style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          Tooltip(
+            message: 'Jump to page',
+            child: InkWell(
+              onTap: _openPageJump,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Text(
+                  '$_page / ${MushafData.totalPages}',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right),
@@ -1315,6 +1352,69 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     );
   }
 }
+
+/// Dialog for jumping straight to a mushaf page by number.
+class _PageJumpDialog extends StatefulWidget {
+  const _PageJumpDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_PageJumpDialog> createState() => _PageJumpDialogState();
+}
+
+class _PageJumpDialogState extends State<_PageJumpDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final n = int.tryParse(_controller.text.trim());
+    if (n == null) {
+      setState(
+        () => _error = 'Enter a page number (1-${MushafData.totalPages}).',
+      );
+      return;
+    }
+    Navigator.of(context).pop(n.clamp(1, MushafData.totalPages).toInt());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Jump to page'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          hintText: '1 – ${MushafData.totalPages}',
+          errorText: _error,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Go')),
+      ],
+    );
+  }
+}
+
 
 /// The ornamental ayah-end circle with the Arabic-Indic verse number inside,
 /// as printed in the Madani mushaf.
