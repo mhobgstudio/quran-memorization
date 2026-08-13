@@ -22,12 +22,14 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
   bar: the page renders like the printed mushaf — a sharp double-rule frame,
   a header band with an ornamental ribbon, the surah name in calligraphy
   between corner medallions (page and juz in Arabic-Indic digits), and the
-  15 Uthmani lines in the KFGQPC Uthmanic Hafs calligraphy with inter-word
-  gaps stretched so every line is justified full-width, ayah-end rosettes
-  sitting inline, a centered basmala, and ornamented surah banners on Juz
-  Amma pages. The page keeps the printed 699×1020 ratio (≈1.46 tall for
-  every wide) and scales to fit — it never warps to the screen. Today's lines are highlighted, direction-aware (first lines
-  for 1 → 604, last lines for 604 → 1)
+  15 Uthmani lines in the KFGQPC Uthmanic Hafs calligraphy justified
+  like the printed page — tight word gaps with the leftover width absorbed
+  by kashida (tatweel letter-stretching inside the words), so even sparse
+  lines fill edge to edge — ayah-end rosettes sitting inline, a centered
+  basmala, and ornamented surah banners on Juz Amma pages. The page keeps
+  the printed 699×1020 ratio (≈1.46 tall for every wide) and scales to fit
+  — it never warps to the screen. Today's lines are highlighted,
+  direction-aware (first lines for 1 → 604, last lines for 604 → 1)
 - **Audio unit playback** — play today's highlighted ayahs with repeat
   ×1/×3/×5/∞ (until stopped), speed 0.5×–2×, a reciter picker (Alafasy,
   Husary murattal/mujawwad, Minshawi, Sudais), and echo mode (auto-pause
