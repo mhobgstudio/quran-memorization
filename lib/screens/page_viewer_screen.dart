@@ -59,6 +59,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   bool _playing = false;
   String? _audioError;
   int _repeat = 3;
+  Reciter _reciter = Reciter.alafasy;
   StreamSubscription<void>? _audioSub;
 
   @override
@@ -150,13 +151,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return [for (final ref in refs) _ayahUrl(ref)];
   }
 
-  static String _ayahUrl(String ref) {
+  String _ayahUrl(String ref) {
     final parts = ref.split(':');
-    return ayahAudioUrl(
-      Reciter.alafasy,
-      int.parse(parts[0]),
-      int.parse(parts[1]),
-    );
+    return ayahAudioUrl(_reciter, int.parse(parts[0]), int.parse(parts[1]));
   }
 
   Future<void> _togglePlay() async {
@@ -638,7 +635,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final repeatText = _repeat == 0 ? '∞ (until stopped)' : '×$_repeat';
     final ayahCount = _todayUrls().length;
     final subtitle =
-        'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · Alafasy';
+        'repeat $repeatText · $ayahCount ayah${ayahCount == 1 ? '' : 's'} · ${_reciter.label}';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -685,34 +682,65 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               ),
             ],
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, bottom: 6),
-              child: Row(
-                children: [
-                  Text('Repeat', style: textTheme.labelMedium),
-                  const SizedBox(width: 8),
-                  SegmentedButton<int>(
-                    key: const ValueKey('repeat-selector'),
-                    segments: [
-                      for (final n in _repeatOptions)
-                        ButtonSegment(
-                          value: n,
-                          label: Text(n == 0 ? '∞' : '$n'),
-                        ),
-                    ],
-                    selected: {_repeat},
-                    onSelectionChanged: (selection) {
-                      setState(() => _repeat = selection.first);
-                    },
-                    showSelectedIcon: false,
-                    style: const ButtonStyle(
-                      visualDensity: VisualDensity.compact,
+          Padding(
+            padding: const EdgeInsets.only(left: 8, bottom: 6),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Repeat', style: textTheme.labelMedium),
+                    const SizedBox(width: 8),
+                    SegmentedButton<int>(
+                      key: const ValueKey('repeat-selector'),
+                      segments: [
+                        for (final n in _repeatOptions)
+                          ButtonSegment(
+                            value: n,
+                            label: Text(n == 0 ? '∞' : '$n'),
+                          ),
+                      ],
+                      selected: {_repeat},
+                      onSelectionChanged: (selection) {
+                        setState(() => _repeat = selection.first);
+                      },
+                      showSelectedIcon: false,
+                      style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Reciter', style: textTheme.labelMedium),
+                    const SizedBox(width: 8),
+                    DropdownButton<Reciter>(
+                      key: const ValueKey('reciter-selector'),
+                      value: _reciter,
+                      isDense: true,
+                      underline: const SizedBox.shrink(),
+                      borderRadius: BorderRadius.circular(12),
+                      items: [
+                        for (final r in Reciter.values)
+                          DropdownMenuItem(value: r, child: Text(r.label)),
+                      ],
+                      onChanged: (reciter) {
+                        if (reciter == null || reciter == _reciter) return;
+                        if (_playing) {
+                          _audio.stop();
+                          _playing = false;
+                        }
+                        setState(() => _reciter = reciter);
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],

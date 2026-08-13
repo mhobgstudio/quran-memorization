@@ -213,6 +213,24 @@ void main() {
     ]);
   });
 
+  testWidgets('reciter picker changes the recitation URLs', (tester) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(1, 5, audio));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reciter-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Husary (murattal)').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    expect(audio.playedUrls, [
+      for (var a = 1; a <= 5; a++) ayahAudioUrl(Reciter.husary, 1, a),
+    ]);
+    expect(find.textContaining('Husary (murattal)'), findsWidgets);
+  });
+
   testWidgets('repeat selector changes the repeat count', (tester) async {
     final audio = FakeQuranAudio();
     await tester.pumpWidget(harness(1, 5, audio));
