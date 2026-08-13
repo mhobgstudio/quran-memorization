@@ -405,7 +405,15 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: _mushafCard(context, page, highlighted),
+            // The printed Madani full-view page is 699×1020 (h/w ≈ 1.4592).
+            // Lock the card to that ratio and center it so it never warps
+            // to the screen — it scales, keeping the mushaf's real shape.
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: 0.6853,
+                child: _mushafCard(context, page, highlighted),
+              ),
+            ),
           ),
         ),
         Padding(

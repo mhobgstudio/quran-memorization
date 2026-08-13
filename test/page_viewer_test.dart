@@ -555,4 +555,23 @@ void main() {
     expect(audio.playedUrls![10], ayahAudioUrl(Reciter.alafasy, 2, 1));
     expect(audio.playedUrls!.last, ayahAudioUrl(Reciter.alafasy, 2, 5));
   });
+
+  testWidgets('keeps the printed mushaf page ratio on a wide screen', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    final size = tester.getSize(
+      find.byKey(const ValueKey('mushaf-frame')),
+    );
+    final ratio = size.width / size.height;
+
+    // 699×1020 page -> width/height ≈ 0.6853, not warped to the 1200px
+    // screen (which would be ~1.3+).
+    expect(ratio, closeTo(0.6853, 0.01));
+    expect(size.width, lessThan(1000));
+  });
 }
