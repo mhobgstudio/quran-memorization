@@ -9,6 +9,7 @@ import 'package:quran_memorization/memorization_calc.dart'
     show MemorizationDirection;
 import 'package:quran_memorization/screens/page_viewer_screen.dart';
 import 'package:quran_memorization/services/audio_unit_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeAudio implements QuranAudio {
   final _completed = StreamController<void>();
@@ -105,5 +106,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('mini-player')), findsOneWidget);
     expect(unit.playing, isTrue);
+  });
+  testWidgets('mini player shows live reciter and speed changes', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final unit = await startedUnit();  // snapshot: Husary · 1.5x · x3
+    await tester.pumpWidget(MaterialApp(home: PlannerScreen(unit: unit)));
+    expect(find.text('Husary (murattal) · 1.5× · repeat ×3'), findsOneWidget);
+
+    // Change speed and reciter on the shared unit while the planner is up.
+    await unit.setSpeed(0.75);
+    await unit.saveDefaults(reciter: Reciter.sudais);
+    await tester.pump();
+
+    // The bar now shows the live values, not the start-time snapshot.
+    expect(find.text('Husary (murattal) · 1.5× · repeat ×3'), findsNothing);
+    expect(find.text('Sudais · 0.75× · repeat ×3'), findsOneWidget);
+
+    // Echo toggles live too.
+    await unit.setEcho(true);
+    await tester.pump();
+    expect(find.text('Sudais · 0.75× · repeat ×3 · echo'), findsOneWidget);
   });
 }

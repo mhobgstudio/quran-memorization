@@ -465,7 +465,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                           ),
                         ),
                         Text(
-                          unit.settings,
+                          unit.liveSettings,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: textTheme.bodySmall?.copyWith(

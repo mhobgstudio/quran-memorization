@@ -267,4 +267,21 @@ void main() {
     expect(unit.repeat, 5);
     unit.dispose();
   });
+  test('liveSettings reflects reciter, speed, repeat and echo live', () async {
+    final unit = await started();  // husary, 1.5x, repeat 3
+    expect(
+      unit.liveSettings,
+      'Husary (murattal) · 1.5× · repeat ×3',
+    );
+
+    await unit.setSpeed(0.75);
+    expect(unit.liveSettings, 'Husary (murattal) · 0.75× · repeat ×3');
+
+    await unit.setEcho(true);
+    expect(unit.liveSettings, 'Husary (murattal) · 0.75× · repeat ×3 · echo');
+
+    SharedPreferences.setMockInitialValues({});
+    await unit.saveDefaults(reciter: Reciter.sudais, repeat: 0);
+    expect(unit.liveSettings, 'Sudais · 0.75× · repeat ∞ · echo');
+  });
 }

@@ -47,9 +47,20 @@ class AudioUnitController extends ChangeNotifier {
 
   String _settings = '';
 
-  /// Snapshot of the playback settings shown under [label], e.g.
-  /// "Husary (murattal) · 1.5× · repeat ×3".
+  /// Snapshot of the playback settings captured when the unit started.
   String get settings => _settings;
+
+  /// Live snapshot of the playback settings, composed from the current
+  /// reciter/speed/repeat/echo so the mini player reflects changes made
+  /// after the unit started (e.g. "Husary (murattal) · 1.5× · repeat ×3").
+  String get liveSettings {
+    final speedLabel = _speed == _speed.roundToDouble()
+        ? '${_speed.toInt()}×'
+        : '$_speed×';
+    return '${_reciter.label} · $speedLabel'
+        ' · repeat ${_repeat == 0 ? '∞' : '×$_repeat'}'
+        '${_echo ? ' · echo' : ''}';
+  }
 
   int _page = 1;
   int get page => _page;
