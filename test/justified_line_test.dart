@@ -23,8 +23,9 @@ class _FakeAudio implements QuranAudio {
   Stream<void> get onCompleted => const Stream.empty();
 }
 
-/// One page with two text lines: a sparse line (3 short words) and a full
-/// line (many words), so kashida must stretch the sparse one.
+/// One page with two justified text lines — a sparse line (3 short words) and
+/// a dense line (many words) — plus the usual header band and basmala, so the
+/// sparse line must fill the full width via its word gaps (no kashida).
 MushafData _fixture() {
   List<Map<String, dynamic>> line(String text) => [
         {'t': 0, 'x': text, 'f': '1:1', 'g': '1:1', 'a': ['1:1']},
@@ -41,7 +42,7 @@ MushafData _fixture() {
         'l': [
           {'t': 1, 'x': 'سُورَةُ ٱلْفَاتِحَةِ'},
           ...line('بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ'),
-          ...line('بِسْمِ ٱللَّهِ'), // sparse: 3 short words
+          ...line('قُلْ هُوَ ٱللَّهُ'), // sparse: 3 short words
           ...line(
             'وَٱلضُّحَىٰ وَٱلَّيْلِ إِذَا سَجَىٰ مَا وَدَّعَكَ رَبُّكَ وَمَا قَلَىٰ',
           ),
@@ -69,39 +70,65 @@ void main() {
     final loader = FontLoader('UthmanicHafs');
     loader.addFont(Future.value(ByteData.view(fontData.buffer)));
     await loader.load();
-    // Realistic card size (the default 800x600 surface makes a tiny card
-    // where the widest line is already over-full even without kashida).
+    // Realistic card size so the widest line fits at the natural font size.
     await tester.binding.setSurfaceSize(const Size(1200, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
   }
 
-  testWidgets('sparse lines are stretched with tatweel (kashida)', (
+  testWidgets('rendered words match the source exactly (no inserted tatweel)', (
     tester,
   ) async {
     await pumpHarness(tester);
 
-    // The sparse line 'بِسْمِ ٱللَّهِ' must gain tatweels inside its words.
-    final sparseTexts = tester
+    // Regression: kashida letter-stretching was removed — every rendered word
+    // must be exactly one of the mushaf's own words (the Uthmani script has
+    // natural tatweels, e.g. in الرحمن, but nothing may be added). The header
+    // band also renders the juz label ("الجزء ١"), which is legitimate.
+    final fixture = _fixture();
+    final source = <String>{};
+    for (final line in fixture.pages.first.lines) {
+      source.addAll(line.text.split(' ').where((w) => w.isNotEmpty));
+    }
+    for (final surah in fixture.surahs) {
+      source.addAll(surah.arabicLong.split(' ').where((w) => w.isNotEmpty));
+    }
+    source
+      ..add('الجزء')
+      // The header band renders its juz and surah-name labels as single
+      // strings (with the space inside), e.g. "الجزء ١" and the surah name.
+      ..add('الجزء ١')
+      ..addAll(
+        fixture.surahs.map((s) => s.arabicLong).where((s) => s.isNotEmpty),
+      );
+    final rendered = tester
         .widgetList<Text>(find.byType(Text))
-        .where(
-          (t) =>
-              t.data != null &&
-              (t.data!.contains('\u0640')) &&
-              t.style?.fontFamily == 'UthmanicHafs',
-        )
+        .where((t) => t.data != null && t.style?.fontFamily == 'UthmanicHafs')
+        .map((t) => t.data!)
         .toList();
-    expect(sparseTexts, isNotEmpty, reason: 'kashida should stretch sparse words');
+    expect(rendered, isNotEmpty);
+    // Skip the ayah-rosette digits (e.g. "١") — those are the ornament
+    // numbers, not stretched text.
+    final digitOnly = RegExp(r'^[٠-٩]+$');
+    for (final word in rendered) {
+      if (digitOnly.hasMatch(word)) continue;
+      expect(
+        source.contains(word),
+        isTrue,
+        reason: 'rendered word "$word" is not in the mushaf source — '
+            'kashida must not alter the text',
+      );
+    }
   });
 
-  testWidgets('kashida lines still fill the full line width with tight gaps', (
+  testWidgets('justified lines still span the full width with word gaps', (
     tester,
   ) async {
     await pumpHarness(tester);
 
-    // Collect word-group boxes per line and check: (a) the line's content
-    // spans the full width, (b) inter-word gaps stay small relative to words.
+    // Collect word-group boxes per line: the justified text lines must reach
+    // the card's right edge (full-width via spaceBetween word gaps).
     final groupRows = find.byWidgetPredicate((w) {
       if (w is! Row || w.mainAxisSize != MainAxisSize.min) return false;
       return tester
@@ -118,17 +145,22 @@ void main() {
     }
     expect(boxes.length, greaterThan(5));
 
+    final maxRight = boxes.map((b) => b.x + b.w).reduce((a, b) => a > b ? a : b);
+
     boxes.sort((a, b) => a.y != b.y ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
-    final ratios = <double>[];
     var lineY = -1.0;
     var prevRight = -1.0;
     final lineGaps = <double>[];
     final lineWords = <double>[];
+    final lineEdges = <double>[];
+    final allGaps = <double>[];
     void flush() {
-      if (lineWords.length > 1 && lineGaps.isNotEmpty) {
-        final mw = [...lineWords]..sort();
-        final mg = [...lineGaps]..sort();
-        ratios.add(mg[mg.length ~/ 2] / mw[mw.length ~/ 2]);
+      if (lineWords.isNotEmpty) {
+        lineEdges.add(prevRight);
+        if (lineGaps.isNotEmpty) {
+          allGaps.addAll(lineGaps);
+          lineGaps.sort();
+        }
       }
       lineGaps.clear();
       lineWords.clear();
@@ -147,10 +179,16 @@ void main() {
     }
     flush();
 
-    expect(ratios, isNotEmpty);
-    // Tight gaps: median gap stays well under a fifth of a word's width
-    // (the printed mushaf is ~0.09; without kashida sparse lines hit 0.4+).
-    final med = [...ratios]..sort();
-    expect(med[med.length ~/ 2], lessThan(0.2));
+    // Both justified text lines (the sparse 3-word line and the dense line)
+    // must reach the card's right edge. The surah banner and basmala are
+    // centred by design and don't reach it.
+    final justifiedEdges = lineEdges
+        .where((e) => (e - maxRight).abs() < 2.0)
+        .length;
+    expect(justifiedEdges, greaterThanOrEqualTo(2),
+        reason: 'justified lines must span the full width');
+    // Sparse lines carry wide inter-word gaps (the natural word-gap spacing
+    // that replaced kashida).
+    expect(allGaps, isNotEmpty);
   });
 }

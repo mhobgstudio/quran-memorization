@@ -1069,14 +1069,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                   alignment: Alignment.center,
                   child: _tokenRow(line.text, fontSize, color),
                 )
-              : LayoutBuilder(
-                  builder: (context, constraints) => _justifiedLine(
-                    line.text,
-                    fontSize,
-                    color,
-                    constraints.maxWidth,
-                  ),
-                ),
+              : _justifiedLine(line.text, fontSize, color),
         );
     }
   }
@@ -1146,88 +1139,16 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return tp.width;
   }
 
-  /// Letters that never connect to the following letter — a tatweel must
-  /// never be placed right after one of these.
-  static const _nonConnecting = '\u0627\u0623\u0625\u0622\u0624\u062F\u0630\u0631\u0632\u0648';
-
-  /// True when [ch] connects forward, so a tatweel can follow it.
-  static bool _connectsToNext(String ch) => !_nonConnecting.contains(ch);
-
-  /// Indices i (1..len-1) where a tatweel can be inserted: directly after a
-  /// connecting letter, so the word keeps its natural final letter form and
-  /// the stretch happens on genuine letter connections, like the printed
-  /// mushaf's calligraphy.
-  static List<int> _kashidaPositions(String word) {
-    final positions = <int>[];
-    for (var i = 1; i < word.length; i++) {
-      if (_connectsToNext(word[i - 1])) positions.add(i);
-    }
-    return positions;
-  }
-
-  /// Rebuilds [word] with `marks[i]` tatweels inserted after character i-1.
-  static String _withTatweels(String word, Map<int, int> marks) {
-    final buf = StringBuffer();
-    for (var i = 0; i < word.length; i++) {
-      buf.write(word[i]);
-      final count = marks[i + 1] ?? 0;
-      for (var k = 0; k < count; k++) {
-        buf.write('\u0640'); // tatweel
-      }
-    }
-    return buf.toString();
-  }
-
-  /// Greedily inserts tatweels into [word] (one at a time, measuring each
-  /// insertion with the real font, reverting any that gains no width) until
-  /// [budgetPx] of extra width has been added. Returns the stretched word.
-  String _stretchToFill(
-    String word,
-    double budgetPx,
-    double Function(String) measure,
-  ) {
-    if (budgetPx <= 0) return word;
-    final positions = _kashidaPositions(word);
-    if (positions.isEmpty) return word;
-    final marks = <int, int>{};
-    var width = measure(word);
-    var used = 0.0;
-    var pass = 0;
-    while (used < budgetPx && pass < 6) {
-      var addedThisPass = false;
-      for (final p in positions) {
-        if (used >= budgetPx) break;
-        marks[p] = (marks[p] ?? 0) + 1;
-        final w = measure(_withTatweels(word, marks));
-        final gain = w - width;
-        // Never overshoot the budget — a single overshooting tatweel per
-        // word would overflow the line and collapse the word gaps.
-        if (gain > 0 && used + gain <= budgetPx) {
-          width = w;
-          used += gain;
-          addedThisPass = true;
-        } else {
-          marks[p] = marks[p]! - 1; // no room there; revert
-        }
-      }
-      if (!addedThisPass) break;
-      pass++;
-    }
-    return _withTatweels(word, marks);
-  }
-
-  /// Renders one full-width mushaf line justified like the printed page:
-  /// the inter-word gaps stay tight (≈0.10 em) and most of the leftover
-  /// width is absorbed by kashida — tatweel letter-stretching inside the
-  /// words — exactly how the Madani calligrapher filled sparse lines. The
-  /// small residual after stretching is shared between the word groups by
-  /// spaceBetween, so no manual gap arithmetic can drift from the glyphs.
-  /// Words run right-to-left; each ayah rosette is glued to its word.
+  /// Renders one full-width mushaf line with the inter-word gaps stretched
+  /// so the text fills the line edge to edge, mirroring the justified
+  /// layout of the printed mushaf. Words run right-to-left; each ayah
+  /// rosette is glued to the word it follows, and the leftover width is
+  /// shared equally between the word groups (mainAxisAlignment spaceBetween,
+  /// so no manual gap arithmetic can drift from the real glyph widths).
   Widget _justifiedLine(
     String text,
     double fontSize,
     Color color,
-    double availableWidth,
   ) {
     final tokens = _tokenize(text);
     if (tokens.isEmpty) return const SizedBox.shrink();
@@ -1237,92 +1158,41 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       height: 1.5,
       color: color,
     );
-    double measure(String s) => _measureText(s, style);
 
-    // Group consecutive tokens so a rosette sticks to the word it follows;
-    // track each word's natural width for the kashida budget.
-    final words = <({String word, double w, String? rosette, double rw})>[];
-    double natural = 0;
+    // Group consecutive tokens so a rosette sticks to the word it follows:
+    // each word starts its own group and a rosette joins the word before it.
+    final groups = <List<Widget>>[];
     for (var i = 0; i < tokens.length; i++) {
       final t = tokens[i];
-      if (t.isRosette) {
-        if (words.isEmpty) continue;
-        final rw = _rosetteWidth(t.text, fontSize);
-        natural += rw;
-        words[words.length - 1] = (
-          word: words.last.word,
-          w: words.last.w,
-          rosette: t.text,
-          rw: rw,
-        );
-      } else {
-        final ww = measure(t.text);
-        natural += ww;
-        words.add((word: t.text, w: ww, rosette: null, rw: 0));
-      }
+      if (groups.isEmpty || !t.isRosette) groups.add([]);
+      groups.last.add(
+        t.isRosette
+            ? _AyahOrnament(
+                key: ValueKey('ayah-ornament-$i'),
+                digits: t.text,
+                fontSize: fontSize,
+                color: color,
+              )
+            : Text(
+                t.text,
+                textDirection: TextDirection.rtl,
+                softWrap: false,
+                style: style,
+              ),
+      );
     }
-    if (words.isEmpty) return const SizedBox.shrink();
-
-    // Tight minimum gap (0.10 em) like the printed page; the rest of the
-    // line width is converted to kashida, keeping the gaps near this floor.
-    const minGapEm = 0.10;
-    final gapCount = words.length - 1;
-    final minGaps = gapCount * minGapEm * fontSize;
-    var leftover = availableWidth - (natural + minGaps);
-
-    if (leftover > 0) {
-      // Give most of the leftover to letter-stretching, weighted by word
-      // width so longer words carry more of the stretch. Reserve ~3% of the
-      // line for the small render-vs-measurement glyph drift so a fully
-      // stretched line never overflows its box.
-      final wordSum = words.fold<double>(0, (s, g) => s + g.w);
-      if (wordSum > 0) {
-        final kashidaBudget =
-            math.max(0.0, leftover - availableWidth * 0.03) * 0.92;
-        var stretched = 0.0;
-        final updated = <({String word, double w, String? rosette, double rw})>[];
-        for (final g in words) {
-          final share = g.w / wordSum;
-          final stretchedWord = _stretchToFill(g.word, kashidaBudget * share, measure);
-          final ww = measure(stretchedWord);
-          stretched += ww - g.w;
-          updated.add((word: stretchedWord, w: ww, rosette: g.rosette, rw: g.rw));
-        }
-        words
-          ..clear()
-          ..addAll(updated);
-        // Residual (and any kashida that couldn't be inserted) stays in the
-        // word gaps via spaceBetween below.
-        leftover = availableWidth - (natural + stretched + minGaps);
-      }
-    }
-
     return Row(
       mainAxisSize: MainAxisSize.max,
       textDirection: TextDirection.rtl,
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        for (final g in words)
+        for (final group in groups)
           Row(
             mainAxisSize: MainAxisSize.min,
             textDirection: TextDirection.rtl,
             crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(
-                g.word,
-                textDirection: TextDirection.rtl,
-                softWrap: false,
-                style: style,
-              ),
-              if (g.rosette != null)
-                _AyahOrnament(
-                  key: ValueKey('ayah-ornament'),
-                  digits: g.rosette!,
-                  fontSize: fontSize,
-                  color: color,
-                ),
-            ],
+            children: group,
           ),
       ],
     );

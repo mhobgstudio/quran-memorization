@@ -23,9 +23,9 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
   a header band with an ornamental ribbon, the surah name in calligraphy
   between corner medallions (page and juz in Arabic-Indic digits), and the
   15 Uthmani lines in the KFGQPC Uthmanic Hafs calligraphy justified
-  like the printed page — tight word gaps with the leftover width absorbed
-  by kashida (tatweel letter-stretching inside the words), so even sparse
-  lines fill edge to edge — ayah-end rosettes sitting inline, a centered
+  like the printed page — the inter-word gaps stretch so every line fills
+  edge to edge, with the words themselves untouched (no kashida/tatweel
+  insertions) — ayah-end rosettes sitting inline, a centered
   basmala, and ornamented surah banners on Juz Amma pages. The page keeps
   the printed 699×1020 ratio (≈1.46 tall for every wide) and scales to fit
   — it never warps to the screen. Today's lines are highlighted,
