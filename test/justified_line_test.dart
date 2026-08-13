@@ -122,13 +122,15 @@ void main() {
     }
   });
 
-  testWidgets('justified lines still span the full width with word gaps', (
+  testWidgets('text lines are centred in the page at natural width', (
     tester,
   ) async {
     await pumpHarness(tester);
 
-    // Collect word-group boxes per line: the justified text lines must reach
-    // the card's right edge (full-width via spaceBetween word gaps).
+    // Collect word-group boxes per line: every multi-word line's content
+    // must sit centred in the page card (its own natural width, with the
+    // leftover shared equally on both sides) rather than justified edge to
+    // edge.
     final groupRows = find.byWidgetPredicate((w) {
       if (w is! Row || w.mainAxisSize != MainAxisSize.min) return false;
       return tester
@@ -145,50 +147,41 @@ void main() {
     }
     expect(boxes.length, greaterThan(5));
 
+    // The page card spans from the leftmost to the rightmost rendered box
+    // (its frame contains all content).
+    final minLeft = boxes.map((b) => b.x).reduce((a, b) => a < b ? a : b);
     final maxRight = boxes.map((b) => b.x + b.w).reduce((a, b) => a > b ? a : b);
+    final cardCenter = (minLeft + maxRight) / 2;
 
     boxes.sort((a, b) => a.y != b.y ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
     var lineY = -1.0;
-    var prevRight = -1.0;
-    final lineGaps = <double>[];
-    final lineWords = <double>[];
-    final lineEdges = <double>[];
-    final allGaps = <double>[];
+    var firstLeft = -1.0;
+    var lastRight = -1.0;
+    final lineCenters = <double>[];
     void flush() {
-      if (lineWords.isNotEmpty) {
-        lineEdges.add(prevRight);
-        if (lineGaps.isNotEmpty) {
-          allGaps.addAll(lineGaps);
-          lineGaps.sort();
-        }
-      }
-      lineGaps.clear();
-      lineWords.clear();
+      if (firstLeft >= 0) lineCenters.add((firstLeft + lastRight) / 2);
+      firstLeft = -1;
+      lastRight = -1;
     }
     for (final b in boxes) {
       if (lineY < 0 || (b.y - lineY).abs() > 8) {
         flush();
         lineY = b.y;
-        prevRight = b.x + b.w;
-        lineWords.add(b.w);
+        firstLeft = b.x;
+        lastRight = b.x + b.w;
       } else {
-        lineGaps.add(b.x - prevRight);
-        prevRight = b.x + b.w;
-        lineWords.add(b.w);
+        lastRight = b.x + b.w;
       }
     }
     flush();
 
-    // Both justified text lines (the sparse 3-word line and the dense line)
-    // must reach the card's right edge. The surah banner and basmala are
-    // centred by design and don't reach it.
-    final justifiedEdges = lineEdges
-        .where((e) => (e - maxRight).abs() < 2.0)
-        .length;
-    expect(justifiedEdges, greaterThanOrEqualTo(2),
-        reason: 'justified lines must span the full width');
-    // Sparse lines carry wide inter-word gaps (the natural word-gap spacing
-    // that replaced kashida).
-    expect(allGaps, isNotEmpty);
+    // Every text line (sparse and dense alike) is centred: its middle sits
+    // at the card's centre. Centring is the explicit intent here, so the
+    // dense line's near-full width still counts — only its middle must match.
+    expect(lineCenters.length, greaterThanOrEqualTo(2));
+    for (final center in lineCenters) {
+      expect(center, closeTo(cardCenter, 3.0),
+          reason: 'line must be centred in the page');
+    }
   });
 }

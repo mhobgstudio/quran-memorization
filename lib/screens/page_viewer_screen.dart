@@ -1139,12 +1139,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return tp.width;
   }
 
-  /// Renders one full-width mushaf line with the inter-word gaps stretched
-  /// so the text fills the line edge to edge, mirroring the justified
-  /// layout of the printed mushaf. Words run right-to-left; each ayah
-  /// rosette is glued to the word it follows, and the leftover width is
-  /// shared equally between the word groups (mainAxisAlignment spaceBetween,
-  /// so no manual gap arithmetic can drift from the real glyph widths).
+  /// Renders one mushaf line at natural width, centered in the page, with
+  /// its words in reading order at natural gaps. Words run right-to-left;
+  /// each ayah rosette is glued to the word it follows.
   Widget _justifiedLine(
     String text,
     double fontSize,
@@ -1184,7 +1181,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return Row(
       mainAxisSize: MainAxisSize.max,
       textDirection: TextDirection.rtl,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         for (final group in groups)
