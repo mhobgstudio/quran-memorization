@@ -129,4 +129,19 @@ void main() {
     await tester.pump();
     expect(find.text('Sudais · 0.75× · repeat ×3 · echo'), findsOneWidget);
   });
+  testWidgets('nightly review button opens the viewer in review mode', (
+    tester,
+  ) async {
+    final unit = AudioUnitController(audio: _FakeAudio());
+    await tester.pumpWidget(MaterialApp(home: PlannerScreen(unit: unit)));
+    await tester.pump(); // settle the first frame (cursor blinks prevent settle)
+
+    await tester.tap(find.byIcon(Icons.nightlight_outlined));
+    await tester.pump(); // frame for the tap
+    await tester.pump(); // build the pushed route
+    expect(find.byType(PageViewerScreen), findsOneWidget);
+    // Default planner (page 1, 10 lines/day) -> the review window starts at
+    // page 1, so the viewer opens there in review mode.
+    expect(find.text('Page 1'), findsOneWidget);
+  });
 }

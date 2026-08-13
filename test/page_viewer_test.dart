@@ -101,6 +101,7 @@ Widget harness(
   FakeQuranAudio audio, {
   MemorizationDirection direction = MemorizationDirection.forward,
   AudioUnitController? unit,
+  int reviewDays = 0,
 }) {
   return MaterialApp(
     home: PageViewerScreen(
@@ -110,6 +111,7 @@ Widget harness(
       mushaf: fixtureMushaf(),
       audio: audio,
       unit: unit,
+      reviewDays: reviewDays,
     ),
   );
 }
@@ -463,5 +465,94 @@ void main() {
     expect(loaded.repeat, 5);
     expect(unit.repeat, 5);
     unit.dispose();
+  });
+  group('reviewSegments', () {
+    test('forward walks back to earlier pages, oldest first', () {
+      final m = fixtureMushaf();
+      final segs = m.reviewSegments(
+        currentPage: 2,
+        linesPerDay: 5,
+        direction: MemorizationDirection.forward,
+        reviewDays: 3,
+      );
+      expect(segs, const [
+        ReviewSegment(page: 1, startLine: 4, lineCount: 10),
+        ReviewSegment(page: 2, startLine: 0, lineCount: 5),
+      ]);
+    });
+
+    test('backward walks to later pages, oldest first', () {
+      final m = fixtureMushaf();
+      final segs = m.reviewSegments(
+        currentPage: 1,
+        linesPerDay: 5,
+        direction: MemorizationDirection.backward,
+        reviewDays: 3,
+      );
+      expect(segs, const [
+        ReviewSegment(page: 2, startLine: 0, lineCount: 10),
+        ReviewSegment(page: 1, startLine: 9, lineCount: 5),
+      ]);
+    });
+
+    test('clamps when the mushaf runs out (page 1 forward)', () {
+      final m = fixtureMushaf();
+      final segs = m.reviewSegments(
+        currentPage: 1,
+        linesPerDay: 5,
+        direction: MemorizationDirection.forward,
+        reviewDays: 3,
+      );
+      expect(segs, const [ReviewSegment(page: 1, startLine: 0, lineCount: 5)]);
+    });
+
+    test('empty when reviewDays is 0', () {
+      final m = fixtureMushaf();
+      expect(
+        m.reviewSegments(
+          currentPage: 2,
+          linesPerDay: 5,
+          direction: MemorizationDirection.forward,
+          reviewDays: 0,
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  testWidgets('review mode opens at the window start and highlights it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(2, 5, FakeQuranAudio(), reviewDays: 3));
+    await tester.pumpAndSettle();
+
+    // Opens on page 1 (oldest page of the window), not today's page 2.
+    expect(find.text('Page 1'), findsOneWidget);
+    expect(
+      find.textContaining('Review (last 3 days): first 10 of 14 lines'),
+      findsOneWidget,
+    );
+    // Window on page 1: text lines 4..13 -> rows 5..14 highlighted.
+    expect(find.byKey(const ValueKey('line-active-5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-14')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-1')), findsNothing);
+  });
+
+  testWidgets('review mode queues the last 3 days of lines oldest-first', (
+    tester,
+  ) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(2, 5, audio, reviewDays: 3));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Play the review queue'));
+    await tester.pump();
+
+    // 10 lines of page 1 (1:5..1:14) then 5 lines of page 2 (2:1..2:5).
+    expect(audio.playedUrls, hasLength(15));
+    expect(audio.playedUrls!.first, ayahAudioUrl(Reciter.alafasy, 1, 5));
+    expect(audio.playedUrls![9], ayahAudioUrl(Reciter.alafasy, 1, 14));
+    expect(audio.playedUrls![10], ayahAudioUrl(Reciter.alafasy, 2, 1));
+    expect(audio.playedUrls!.last, ayahAudioUrl(Reciter.alafasy, 2, 5));
   });
 }

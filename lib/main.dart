@@ -158,17 +158,39 @@ class _PlannerScreenState extends State<PlannerScreen> {
     );
   }
 
-  void _openPageViewer() {
+  /// The planner's daily rate converted to text lines per day.
+  double _effectiveLinesPerDay() {
     final pagesPerDay = _rateMode == RateMode.lines
         ? (_rate ?? 10) / MemorizationPlan.linesPerPage
         : (_rate ?? (2 / 3));
+    return pagesPerDay * MemorizationPlan.linesPerPage;
+  }
+
+  void _openPageViewer() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => PageViewerScreen(
           page: _page ?? 1,
-          linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
+          linesPerDay: _effectiveLinesPerDay(),
           direction: _direction,
           unit: widget.unit,
+        ),
+      ),
+    );
+  }
+
+  /// Nightly review: opens the mushaf viewer with the last [reviewDays] days
+  /// of lines queued for listening, oldest-first.
+  void _openReviewViewer() {
+    const reviewDays = 3;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PageViewerScreen(
+          page: _page ?? 1,
+          linesPerDay: _effectiveLinesPerDay(),
+          direction: _direction,
+          unit: widget.unit,
+          reviewDays: reviewDays,
         ),
       ),
     );
@@ -213,6 +235,11 @@ class _PlannerScreenState extends State<PlannerScreen> {
         title: const Text('Hifz Planner'),
         centerTitle: false,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.nightlight_outlined),
+            tooltip: 'Nightly review — last 3 days',
+            onPressed: _openReviewViewer,
+          ),
           IconButton(
             icon: const Icon(Icons.menu_book_outlined),
             tooltip: "View today's page",

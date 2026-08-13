@@ -24,6 +24,7 @@ class PageViewerScreen extends StatefulWidget {
     this.mushaf,
     this.audio,
     this.unit,
+    this.reviewDays = 0,
   });
 
   /// Initial page to show (1..604).
@@ -46,6 +47,11 @@ class PageViewerScreen extends StatefulWidget {
   /// today's unit keeps playing after this screen is closed (persistent mini
   /// player on the planner).
   final AudioUnitController? unit;
+
+  /// Nightly review window in days (0 = off). When > 0 the viewer opens at
+  /// the start of the last [reviewDays] days of memorized lines and queues
+  /// them all for listening, instead of just today's portion.
+  final int reviewDays;
 
   @override
   State<PageViewerScreen> createState() => _PageViewerScreenState();
@@ -129,6 +135,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     if (injected != null) {
       _mushaf = injected;
       _loading = false;
+      _jumpToReviewStart();
       return;
     }
     try {
@@ -137,6 +144,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       setState(() {
         _mushaf = mushaf;
         _loading = false;
+        _jumpToReviewStart();
       });
     } catch (e) {
       if (!mounted) return;
@@ -147,17 +155,59 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     }
   }
 
+  /// In review mode the viewer opens where the window begins (the oldest of
+  /// the last N days) so the user can follow along as the queue plays.
+  void _jumpToReviewStart() {
+    if (widget.reviewDays <= 0 || _mushaf == null) return;
+    final segments = _mushaf!.reviewSegments(
+      currentPage: widget.page,
+      linesPerDay: widget.linesPerDay,
+      direction: widget.direction,
+      reviewDays: widget.reviewDays,
+    );
+    if (segments.isNotEmpty) {
+      _page = segments.first.page;
+    }
+  }
+
   MushafPage get _currentPage => _mushaf!.page(_page);
 
-  /// Number of text lines assigned for today (0..lines on the page).
+  /// Number of text lines assigned for today (0..lines on the page). In
+  /// review mode this is the window's share of the *displayed* page (0 when
+  /// the page falls outside the window).
   int _todayLineCount() {
+    if (widget.reviewDays > 0) {
+      for (final seg in _reviewSegments()) {
+        if (seg.page == _page) return seg.lineCount;
+      }
+      return 0;
+    }
     final lines = _currentPage.textLines.length;
     if (widget.linesPerDay <= 0) return 0;
     return widget.linesPerDay.round().clamp(0, lines);
   }
 
+  /// The nightly review window (oldest-first). Empty when review mode is off.
+  List<ReviewSegment> _reviewSegments() {
+    final mushaf = _mushaf;
+    if (mushaf == null || widget.reviewDays <= 0) return const [];
+    return mushaf.reviewSegments(
+      currentPage: widget.page,
+      linesPerDay: widget.linesPerDay,
+      direction: widget.direction,
+      reviewDays: widget.reviewDays,
+    );
+  }
+
   /// Row indices (within [page].lines) of today's highlighted text lines.
+  /// In review mode the window's lines are highlighted instead.
   Set<int> _highlightedRowIndices(MushafPage page) {
+    if (widget.reviewDays > 0) {
+      for (final seg in _reviewSegments()) {
+        if (seg.page == page.page) return _rowsForSegment(page, seg);
+      }
+      return const {};
+    }
     final n = _todayLineCount();
     if (n <= 0) return const {};
     final texts = page.textLines;
@@ -165,11 +215,20 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final start = widget.direction == MemorizationDirection.backward
         ? total - n
         : 0;
+    return _rowsInRange(page, start, n);
+  }
+
+  Set<int> _rowsForSegment(MushafPage page, ReviewSegment seg) =>
+      _rowsInRange(page, seg.startLine, seg.lineCount);
+
+  /// Maps [start]..start+[count]-1 text-line ordinals to row indices in the
+  /// page's [page.lines] list (skipping header/basmala/blank rows).
+  Set<int> _rowsInRange(MushafPage page, int start, int count) {
     final result = <int>{};
     var ord = 0;
     for (var i = 0; i < page.lines.length; i++) {
       if (page.lines[i].isText) {
-        if (ord >= start && ord < start + n) result.add(i);
+        if (ord >= start && ord < start + count) result.add(i);
         ord++;
       }
     }
@@ -177,11 +236,12 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   }
 
   List<String> _todayUrls() {
-    final page = _currentPage;
-    final lines = page.todayLines(
-      lineCount: _todayLineCount(),
-      direction: widget.direction,
-    );
+    final lines = widget.reviewDays > 0
+        ? _reviewLines()
+        : _currentPage.todayLines(
+            lineCount: _todayLineCount(),
+            direction: widget.direction,
+          );
     // Line verse ranges overlap at ayah boundaries (a line ending mid-ayah
     // and the next continuing it both list that ayah), so collapse
     // consecutive duplicates while preserving order.
@@ -192,6 +252,19 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       }
     }
     return [for (final ref in refs) _ayahUrl(ref)];
+  }
+
+  /// Every text line in the review window, oldest-first, across all pages.
+  /// Used to build the listening queue (and its ayah count).
+  List<MushafLine> _reviewLines() {
+    final mushaf = _mushaf;
+    if (mushaf == null) return const [];
+    final lines = <MushafLine>[];
+    for (final seg in _reviewSegments()) {
+      final texts = mushaf.page(seg.page).textLines;
+      lines.addAll(texts.sublist(seg.startLine, seg.startLine + seg.lineCount));
+    }
+    return lines;
   }
 
   String get _speedLabel {
@@ -218,7 +291,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       final meta = _mushaf!.surahMeta(_currentPage.surah);
       await unit.play(
         urls: urls,
-        label: '${meta.arabicLong} · page $_page',
+        label: widget.reviewDays > 0
+            ? '${meta.arabicLong} · review (last ${widget.reviewDays} days)'
+            : '${meta.arabicLong} · page $_page',
         settings:
             '${_reciter.label} · $_speedLabel · repeat ${_repeat == 0 ? '∞' : '×$_repeat'}${_echo ? ' · echo' : ''}',
         page: _page,
@@ -340,7 +415,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
           child: Text(
-            "Highlighted lines are today's portion — the audio plays exactly those ayahs.",
+            widget.reviewDays > 0
+                ? "Highlighted lines are the last ${widget.reviewDays} days — the audio queues them oldest-first."
+                : "Highlighted lines are today's portion — the audio plays exactly those ayahs.",
             textAlign: TextAlign.center,
             style: textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
@@ -393,7 +470,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     int total,
     bool whole,
   ) {
-    final label = whole
+    final label = widget.reviewDays > 0
+        ? (whole
+              ? 'Review (last ${widget.reviewDays} days): this whole page'
+              : widget.direction == MemorizationDirection.backward
+              ? 'Review (last ${widget.reviewDays} days): last $today of $total lines'
+              : 'Review (last ${widget.reviewDays} days): first $today of $total lines')
+        : whole
         ? "Today's portion: the whole page ($total lines)"
         : widget.direction == MemorizationDirection.backward
         ? "Today's portion: last $today of $total lines"
@@ -738,10 +821,15 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final echoActive = _echo && (unit != null ? unit.hasUnit : _started);
     final pos = unit != null ? unit.ayahIndex : _ayahIndex;
     final total = unit != null ? unit.totalAyahs : _todayUrls().length;
+    final reviewing = widget.reviewDays > 0;
     final title =
         error ??
         (echoActive
             ? 'Echo — ayah ${pos + 1} of $total'
+            : reviewing
+            ? (playing
+                  ? 'Playing review — last ${widget.reviewDays} days'
+                  : 'Play review — last ${widget.reviewDays} days')
             : (playing ? "Playing today's portion" : "Play today's portion"));
     final repeatText = _repeat == 0 ? '∞ (until stopped)' : '×$_repeat';
     final ayahCount = _todayUrls().length;
@@ -766,7 +854,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                     ? 'Pause'
                     : (echoActive
                           ? 'Next ayah (listen & repeat)'
-                          : "Play today's portion"),
+                          : (widget.reviewDays > 0
+                                ? 'Play the review queue'
+                                : "Play today's portion")),
                 onPressed: enabled ? _togglePlay : null,
               ),
               Expanded(

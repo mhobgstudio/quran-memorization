@@ -37,6 +37,10 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
 - **Saved audio preferences** — your chosen reciter, playback speed, and
   repeat count are remembered across app restarts (shared_preferences), so
   the audio bar opens with your last-used settings
+- **Nightly review mode** — the planner's 🌙 button opens the mushaf viewer
+  with the last 3 days of lines queued for listening, oldest-first (the
+  viewer jumps to where the window starts and highlights it); direction-aware,
+  so it works whether you memorize from page 1 or from page 604
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

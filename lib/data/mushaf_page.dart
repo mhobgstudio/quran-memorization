@@ -48,6 +48,36 @@ class MushafLine {
   bool get isText => type == MushafLineType.text;
 }
 
+/// One contiguous run of text lines on a page that belongs to a review
+/// window (e.g. "the last 3 days of memorized lines").
+@immutable
+class ReviewSegment {
+  const ReviewSegment({
+    required this.page,
+    required this.startLine,
+    required this.lineCount,
+  });
+
+  /// Page number 1..604.
+  final int page;
+
+  /// 0-based index into the page's [MushafPage.textLines] where the run starts.
+  final int startLine;
+
+  /// Number of text lines on this page included in the window.
+  final int lineCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReviewSegment &&
+      other.page == page &&
+      other.startLine == startLine &&
+      other.lineCount == lineCount;
+
+  @override
+  int get hashCode => Object.hash(page, startLine, lineCount);
+}
+
 /// One page of the mushaf with its juz and header surah.
 @immutable
 class MushafPage {
@@ -185,6 +215,70 @@ class MushafData {
 
   /// Metadata for [surah] (1..114).
   SurahMeta surahMeta(int surah) => surahs[surah - 1];
+
+  /// The nightly review window: the [reviewDays] most recent study days of
+  /// memorized lines (each day = [linesPerDay] text lines), ending at today's
+  /// assignment on [page]. Returns the runs oldest-first so a review session
+  /// plays from the earliest content to today.
+  ///
+  /// Forward direction (page 1 → 604) walks back to earlier pages; backward
+  /// direction (604 → 1) walks to later pages. Clamps when the mushaf runs
+  /// out (e.g. reviewing from page 1) and returns an empty list for
+  /// [reviewDays] <= 0 or a non-positive [linesPerDay].
+  List<ReviewSegment> reviewSegments({
+    required int currentPage,
+    required double linesPerDay,
+    required MemorizationDirection direction,
+    required int reviewDays,
+  }) {
+    if (reviewDays <= 0 || linesPerDay <= 0) return const [];
+    final todayCount = linesPerDay
+        .round()
+        .clamp(0, page(currentPage).textLines.length)
+        .toInt();
+    final total = (linesPerDay * reviewDays).round();
+    final segments = <ReviewSegment>[];
+    var remaining = total;
+    var cur = currentPage;
+
+    if (direction == MemorizationDirection.backward) {
+      // Today is the last lines of the page; earlier days lie on later pages.
+      final start = page(currentPage).textLines.length - todayCount;
+      final take = todayCount < remaining ? todayCount : remaining;
+      if (take > 0) {
+        segments.add(ReviewSegment(page: cur, startLine: start, lineCount: take));
+        remaining -= take;
+      }
+      cur = currentPage + 1;
+      while (remaining > 0 && cur <= pages.length) {
+        final c = page(cur).textLines.length;
+        final t = c < remaining ? c : remaining;
+        segments.add(ReviewSegment(page: cur, startLine: 0, lineCount: t));
+        remaining -= t;
+        cur++;
+      }
+      // segments are newest-first (today .. oldest); reverse to play oldest first.
+      return segments.reversed.toList();
+    }
+
+    // Forward: today is the first lines of the page; earlier days lie on the
+    // tail of the previous pages. Insert older pages at the front so the
+    // result is oldest-first.
+    final take = todayCount < remaining ? todayCount : remaining;
+    if (take > 0) {
+      segments.add(ReviewSegment(page: cur, startLine: 0, lineCount: take));
+      remaining -= take;
+    }
+    cur = currentPage - 1;
+    while (remaining > 0 && cur >= 1) {
+      final c = page(cur).textLines.length;
+      final t = c < remaining ? c : remaining;
+      segments.insert(0, ReviewSegment(page: cur, startLine: c - t, lineCount: t));
+      remaining -= t;
+      cur--;
+    }
+    return segments;
+  }
 }
 
 /// Formats [n] with Arabic-Indic digits (0→٠ … 9→٩), as used on the mushaf
