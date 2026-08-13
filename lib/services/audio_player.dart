@@ -3,6 +3,7 @@ import 'package:just_audio/just_audio.dart';
 /// Minimal audio interface so UI and tests don't depend on just_audio.
 abstract class QuranAudio {
   /// Plays [urls] in order, repeating the whole unit [repeat] times.
+  /// A [repeat] of 0 or less loops the unit until [pause] or [stop].
   Future<void> play({required List<String> urls, required int repeat});
 
   Future<void> pause();
@@ -24,9 +25,12 @@ class JustQuranAudio implements QuranAudio {
   @override
   Future<void> play({required List<String> urls, required int repeat}) async {
     await _player.stop();
-    // Repeating the whole unit: duplicate the concatenated ayah sources.
+    // repeat <= 0: loop the unit until stopped; otherwise duplicate the
+    // concatenated ayah sources so just_audio plays it [repeat] times.
+    final infinite = repeat <= 0;
+    await _player.setLoopMode(infinite ? LoopMode.all : LoopMode.off);
     final sources = [
-      for (var r = 0; r < repeat; r++)
+      for (var r = 0; r < (infinite ? 1 : repeat); r++)
         for (final url in urls) AudioSource.uri(Uri.parse(url)),
     ];
     await _player.setAudioSources(sources);

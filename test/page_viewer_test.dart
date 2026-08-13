@@ -1,23 +1,61 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:quran_memorization/data/mushaf_page.dart';
 import 'package:quran_memorization/data/quran_audio.dart';
-import 'package:quran_memorization/data/quran_text.dart';
+import 'package:quran_memorization/memorization_calc.dart'
+    show MemorizationDirection;
 import 'package:quran_memorization/screens/page_viewer_screen.dart';
 import 'package:quran_memorization/services/audio_player.dart';
 
-/// Minimal fixture modeled on the real asset schema: surah 1 (2 ayahs) on
-/// page 1, surah 2 (3 ayahs) on page 2.
-QuranText fixtureQuran() => QuranText.fromJson({
-  'surahs': [
-    {'s': 1, 'c': 2, 'n': 'الفاتحة', 't': 'Al-Faatiha'},
-    {'s': 2, 'c': 3, 'n': 'البقرة', 't': 'Al-Baqara'},
-  ],
-  'text': ['أ', 'ب', 'ج', 'د', 'ه'],
-  'pages': [
-    [0, 1],
-    [2, 3, 4],
-  ],
-});
+/// Fixture modeled on the real asset schema: page 1 = surah 1 with 14 text
+/// lines (1:1..1:14), page 2 = surah 2 with basmala + 13 text lines
+/// (2:1..2:13).
+MushafData fixtureMushaf() {
+  List<Map<String, dynamic>> textLines(int surah, int start, int count) => [
+    for (var i = 0; i < count; i++)
+      {
+        't': 0,
+        'x': 'كلمة$surah-${start + i} ${toArabicIndic(start + i)}',
+        'f': '$surah:${start + i}',
+        'g': '$surah:${start + i}',
+        'a': ['$surah:${start + i}'],
+      },
+  ];
+
+  return MushafData.fromJson({
+    'surahs': [
+      {
+        's': 1,
+        'n': 'الفاتحة',
+        'l': 'سُورَةُ ٱلْفَاتِحَةِ',
+        't': 'Al-Fatihah',
+        'c': 7,
+      },
+      {'s': 2, 'n': 'البقرة', 'l': 'سورة البقرة', 't': 'Al-Baqarah', 'c': 13},
+    ],
+    'pages': [
+      {
+        'p': 1,
+        'j': 1,
+        's': 1,
+        'l': [
+          {'t': 1, 'x': 'سُورَةُ ٱلْفَاتِحَةِ'},
+          ...textLines(1, 1, 14),
+        ],
+      },
+      {
+        'p': 2,
+        'j': 1,
+        's': 2,
+        'l': [
+          {'t': 1, 'x': 'سورة البقرة'},
+          {'t': 2, 'x': 'بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ'},
+          ...textLines(2, 1, 13),
+        ],
+      },
+    ],
+  });
+}
 
 class FakeQuranAudio implements QuranAudio {
   List<String>? playedUrls;
@@ -44,50 +82,106 @@ class FakeQuranAudio implements QuranAudio {
   Stream<void> get onCompleted => const Stream<void>.empty();
 }
 
-Widget harness(int page, double linesPerDay, FakeQuranAudio audio) {
+Widget harness(
+  int page,
+  double linesPerDay,
+  FakeQuranAudio audio, {
+  MemorizationDirection direction = MemorizationDirection.forward,
+}) {
   return MaterialApp(
     home: PageViewerScreen(
       page: page,
       linesPerDay: linesPerDay,
-      quran: fixtureQuran(),
+      direction: direction,
+      mushaf: fixtureMushaf(),
       audio: audio,
     ),
   );
 }
 
 void main() {
-  testWidgets('renders page, surah header and ayah rows', (tester) async {
-    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Page 1'), findsOneWidget);
-    expect(find.textContaining('Al-Faatiha'), findsWidgets);
-    expect(find.text('أ'), findsOneWidget);
-    expect(find.text('ب'), findsOneWidget);
-  });
-
-  testWidgets('highlights today portion (5 of 15 lines of 2 ayahs → 1)', (
+  testWidgets('renders mushaf page with header band, lines and ornaments', (
     tester,
   ) async {
     await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('ayah-active-0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('ayah-rest-1')), findsOneWidget);
-    expect(find.textContaining('1 of 2'), findsOneWidget);
+    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('page-header')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-rest-6')), findsOneWidget);
+    // Inline WidgetSpan children are not traversed by find.byKey;
+    // ornament keys are visible to the widget predicate.
+    expect(
+      find.byWidgetPredicate((w) => w.key.toString().contains('ayah-ornament')),
+      findsWidgets,
+    );
+    expect(find.byKey(const ValueKey('surah-banner-0')), findsNothing);
   });
 
-  testWidgets('whole page highlighted when lines ≥ 15', (tester) async {
-    await tester.pumpWidget(harness(2, 15, FakeQuranAudio()));
+  testWidgets('header shows Arabic-Indic page, juz and surah name', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('ayah-active-0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('ayah-active-2')), findsOneWidget);
-    expect(find.byKey(const ValueKey('ayah-rest-0')), findsNothing);
-    expect(find.textContaining('whole page'), findsOneWidget);
+    final number = tester.widget<Text>(
+      find.byKey(const ValueKey('page-header-number')),
+    );
+    expect(number.data, '١');
+    final juz = tester.widget<Text>(
+      find.byKey(const ValueKey('page-header-juz')),
+    );
+    expect(juz.data, 'الجزء ١');
+    final surah = tester.widget<Text>(
+      find.byKey(const ValueKey('page-header-surah')),
+    );
+    expect(surah.data, 'سُورَةُ ٱلْفَاتِحَةِ');
   });
 
-  testWidgets('play button plays today portion with default repeat', (
+  testWidgets('highlights the first lines when memorizing forward', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    // Page 1: rows 1..14 are text; 5 lines → row indices 1..5.
+    expect(find.byKey(const ValueKey('line-active-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-6')), findsNothing);
+    expect(find.byKey(const ValueKey('line-rest-6')), findsOneWidget);
+    expect(find.textContaining('first 5 of 14'), findsOneWidget);
+  });
+
+  testWidgets('highlights the last lines when memorizing backward', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(
+        2,
+        3,
+        FakeQuranAudio(),
+        direction: MemorizationDirection.backward,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Page 2: rows 2..14 are text (13 lines); last 3 → row indices 12..14.
+    expect(find.byKey(const ValueKey('line-active-12')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-14')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-active-2')), findsNothing);
+    expect(find.textContaining('last 3 of 13'), findsOneWidget);
+  });
+
+  testWidgets('whole page highlighted when lines ≥ page lines', (tester) async {
+    await tester.pumpWidget(harness(1, 15, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('line-active-14')), findsOneWidget);
+    expect(find.byKey(const ValueKey('line-rest-14')), findsNothing);
+    expect(find.textContaining('the whole page'), findsOneWidget);
+  });
+
+  testWidgets('play button plays today ayahs with default repeat', (
     tester,
   ) async {
     final audio = FakeQuranAudio();
@@ -97,10 +191,26 @@ void main() {
     await tester.tap(find.byIcon(Icons.play_arrow));
     await tester.pumpAndSettle();
 
-    // Page 1 has 2 ayahs; 5 lines of 15 → highlight 1 → surah 1 ayah 1 only.
-    expect(audio.playedUrls, [ayahAudioUrl(Reciter.alafasy, 1, 1)]);
+    expect(audio.playedUrls, [
+      for (var a = 1; a <= 5; a++) ayahAudioUrl(Reciter.alafasy, 1, a),
+    ]);
     expect(audio.repeat, 3);
     expect(find.text("Playing today's portion"), findsOneWidget);
+  });
+
+  testWidgets('backward play uses the last lines ayahs', (tester) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(
+      harness(2, 3, audio, direction: MemorizationDirection.backward),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    expect(audio.playedUrls, [
+      for (var a = 11; a <= 13; a++) ayahAudioUrl(Reciter.alafasy, 2, a),
+    ]);
   });
 
   testWidgets('repeat selector changes the repeat count', (tester) async {
@@ -119,6 +229,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(audio.repeat, 5);
+  });
+
+  testWidgets('infinite loop option plays until stopped (repeat 0)', (
+    tester,
+  ) async {
+    final audio = FakeQuranAudio();
+    await tester.pumpWidget(harness(1, 5, audio));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('repeat-selector')),
+        matching: find.text('∞'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    expect(audio.repeat, 0);
+    expect(find.textContaining('until stopped'), findsOneWidget);
   });
 
   testWidgets('pause toggles playback', (tester) async {
@@ -158,10 +289,88 @@ void main() {
     await tester.tap(find.byIcon(Icons.chevron_right));
     await tester.pumpAndSettle();
     expect(find.text('Page 2'), findsOneWidget);
-    expect(find.text('ج'), findsOneWidget);
+    final surah = tester.widget<Text>(
+      find.byKey(const ValueKey('page-header-surah')),
+    );
+    expect(surah.data, 'سورة البقرة');
 
     await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();
     expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('audio dedupes boundary ayahs shared by adjacent lines', (
+    tester,
+  ) async {
+    final audio = FakeQuranAudio();
+    final mushaf = MushafData.fromJson({
+      'surahs': [
+        {
+          's': 1,
+          'n': 'الفاتحة',
+          'l': 'سُورَةُ ٱلْفَاتِحَةِ',
+          't': 'Al-Fatihah',
+          'c': 7,
+        },
+        {'s': 2, 'n': 'البقرة', 'l': 'سورة البقرة', 't': 'Al-Baqarah', 'c': 4},
+      ],
+      'pages': [
+        {
+          'p': 1,
+          'j': 1,
+          's': 2,
+          'l': [
+            {'t': 1, 'x': 'سورة البقرة'},
+            {
+              't': 0,
+              'x': 'أ ١ ب ٢',
+              'f': '2:1',
+              'g': '2:2',
+              'a': ['2:1', '2:2'],
+            },
+            {
+              't': 0,
+              'x': 'ج ٣',
+              'f': '2:2',
+              'g': '2:3',
+              'a': ['2:2', '2:3'],
+            },
+            for (var i = 0; i < 12; i++) {'t': 3, 'x': ''},
+          ],
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PageViewerScreen(
+          page: 1,
+          linesPerDay: 2,
+          mushaf: mushaf,
+          audio: audio,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    // 2:2 is shared by both lines; it must play exactly once.
+    expect(audio.playedUrls, [
+      ayahAudioUrl(Reciter.alafasy, 2, 1),
+      ayahAudioUrl(Reciter.alafasy, 2, 2),
+      ayahAudioUrl(Reciter.alafasy, 2, 3),
+    ]);
+  });
+
+  testWidgets('audio disabled when no lines assigned', (tester) async {
+    await tester.pumpWidget(harness(1, 0, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    final button = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.play_arrow),
+    );
+    expect(button.onPressed, isNull);
+    expect(find.textContaining('first 0 of 14'), findsOneWidget);
   });
 }

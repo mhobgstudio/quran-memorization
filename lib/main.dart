@@ -147,6 +147,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
         builder: (_) => PageViewerScreen(
           page: _page ?? 1,
           linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
+          direction: _direction,
         ),
       ),
     );

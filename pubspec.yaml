@@ -60,6 +60,12 @@ flutter:
 
   assets:
     - assets/quran_data.json
+    - assets/mushaf_lines.json
+
+  fonts:
+    - family: UthmanicHafs
+      fonts:
+        - asset: assets/fonts/UthmanicHafs1.otf
 
   # To add assets to your application, add an assets section, like this:
   # assets:
