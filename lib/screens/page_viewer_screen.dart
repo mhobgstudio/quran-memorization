@@ -1139,9 +1139,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return tp.width;
   }
 
-  /// Renders one mushaf line at natural width, centered in the page, with
-  /// its words in reading order at natural gaps. Words run right-to-left;
-  /// each ayah rosette is glued to the word it follows.
+  /// Renders one mushaf line spread across the page width AND centered:
+  /// the words are laid out at natural width and the leftover space is
+  /// divided evenly into equal gaps (including before the first and after
+  /// the last word), so every line is symmetric about the page center with
+  /// justified, evenly distributed spacing — like centered-and-justified
+  /// typesetting. Words run right-to-left; each ayah rosette is glued to
+  /// the word it follows.
   Widget _justifiedLine(
     String text,
     double fontSize,
@@ -1181,7 +1185,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     return Row(
       mainAxisSize: MainAxisSize.max,
       textDirection: TextDirection.rtl,
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         for (final group in groups)

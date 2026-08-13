@@ -122,66 +122,92 @@ void main() {
     }
   });
 
-  testWidgets('text lines are centred in the page at natural width', (
+  testWidgets('text lines are centred AND evenly spaced across the page', (
     tester,
   ) async {
     await pumpHarness(tester);
 
-    // Collect word-group boxes per line: every multi-word line's content
-    // must sit centred in the page card (its own natural width, with the
-    // leftover shared equally on both sides) rather than justified edge to
-    // edge.
-    final groupRows = find.byWidgetPredicate((w) {
-      if (w is! Row || w.mainAxisSize != MainAxisSize.min) return false;
+    // The justified lines are the outer max-size Rows holding the word
+    // groups; their own bounds define the line's full width (the card frame
+    // has padding, so we must not measure against it).
+    final outerRows = find.byWidgetPredicate((w) {
+      if (w is! Row || w.mainAxisSize != MainAxisSize.max) return false;
       return tester
           .widgetList<Text>(
             find.descendant(of: find.byWidget(w), matching: find.byType(Text)),
           )
           .any((t) => t.style?.fontFamily == 'UthmanicHafs');
     });
-    final boxes = <({double y, double x, double w})>[];
-    for (final w in tester.widgetList<Row>(groupRows)) {
+    final outerBoxes = <({double y, double left, double right})>[];
+    for (final w in tester.widgetList<Row>(outerRows)) {
       final box = tester.renderObject<RenderBox>(find.byWidget(w));
       final pos = box.localToGlobal(Offset.zero);
-      boxes.add((y: pos.dy, x: pos.dx, w: box.size.width));
+      outerBoxes.add(
+        (y: pos.dy, left: pos.dx, right: pos.dx + box.size.width),
+      );
     }
-    expect(boxes.length, greaterThan(5));
+    expect(outerBoxes.length, greaterThanOrEqualTo(2),
+        reason: 'expected the sparse and dense justified lines');
+    final cardCenter = (outerBoxes.first.left + outerBoxes.first.right) / 2;
 
-    // The page card spans from the leftmost to the rightmost rendered box
-    // (its frame contains all content).
-    final minLeft = boxes.map((b) => b.x).reduce((a, b) => a < b ? a : b);
-    final maxRight = boxes.map((b) => b.x + b.w).reduce((a, b) => a > b ? a : b);
-    final cardCenter = (minLeft + maxRight) / 2;
-
-    boxes.sort((a, b) => a.y != b.y ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
-    var lineY = -1.0;
-    var firstLeft = -1.0;
-    var lastRight = -1.0;
-    final lineCenters = <double>[];
-    void flush() {
-      if (firstLeft >= 0) lineCenters.add((firstLeft + lastRight) / 2);
-      firstLeft = -1;
-      lastRight = -1;
-    }
-    for (final b in boxes) {
-      if (lineY < 0 || (b.y - lineY).abs() > 8) {
-        flush();
-        lineY = b.y;
-        firstLeft = b.x;
-        lastRight = b.x + b.w;
+    // Collect each line's word-group boxes: for every justified max-Row,
+    // find its own direct child min-Rows (scoped per widget instance).
+    final outerWidgets = tester.widgetList<Row>(outerRows).toList();
+    final lines = <List<({double x, double w})>>[];
+    for (var i = 0; i < outerWidgets.length; i++) {
+      final outerWidget = outerWidgets[i];
+      final groupRows = find.descendant(
+        of: find.byWidget(outerWidget),
+        matching: find.byWidgetPredicate(
+          (w) => w is Row && w.mainAxisSize == MainAxisSize.min,
+        ),
+      );
+      final line = <({double x, double w})>[];
+      for (final g in tester.widgetList<Row>(groupRows)) {
+        final box = tester.renderObject<RenderBox>(find.byWidget(g));
+        final pos = box.localToGlobal(Offset.zero);
+        line.add((x: pos.dx, w: box.size.width));
+      }
+      line.sort((a, b) => a.x.compareTo(b.x));
+      if (line.length >= 3) {
+        lines.add(line);
       } else {
-        lastRight = b.x + b.w;
+        // Keep the pairing intact: record an empty slot for short lines so
+        // lines[i] still corresponds to outerBoxes[i].
+        lines.add(const []);
       }
     }
-    flush();
+    final spaced = lines.where((l) => l.length >= 3).toList();
+    expect(spaced.length, greaterThanOrEqualTo(1),
+        reason: 'need at least one multi-word line to assert spacing');
 
-    // Every text line (sparse and dense alike) is centred: its middle sits
-    // at the card's centre. Centring is the explicit intent here, so the
-    // dense line's near-full width still counts — only its middle must match.
-    expect(lineCenters.length, greaterThanOrEqualTo(2));
-    for (final center in lineCenters) {
-      expect(center, closeTo(cardCenter, 3.0),
+    for (var i = 0; i < outerBoxes.length; i++) {
+      final line = lines[i];
+      if (line.length < 3) continue;
+      final outer = outerBoxes[i];
+      final first = line.first;
+      final last = line.last;
+
+      // (a) Centred: the line's middle sits at the page centre.
+      final lineCenter = (first.x + (last.x + last.w)) / 2;
+      expect(lineCenter, closeTo(cardCenter, 3.0),
           reason: 'line must be centred in the page');
+
+      // (b) Justified: spaceEvenly divides the leftover into equal gaps —
+      // before the first word, between words, and after the last word.
+      final gaps = <double>[];
+      gaps.add(first.x - outer.left); // left edge gap
+      for (var k = 1; k < line.length; k++) {
+        gaps.add(line[k].x - (line[k - 1].x + line[k - 1].w));
+      }
+      gaps.add(outer.right - (last.x + last.w)); // right edge gap
+      final firstGap = gaps.first;
+      for (final g in gaps) {
+        expect(g, closeTo(firstGap, 3.0),
+            reason: 'spacing must be evenly distributed (centred + justified)');
+      }
+      // And the spacing is non-trivial: the line is actually spread out.
+      expect(firstGap, greaterThan(2.0));
     }
   });
 }
