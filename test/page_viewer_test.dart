@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quran_memorization/data/mushaf_page.dart';
 import 'package:quran_memorization/data/quran_audio.dart';
+import 'package:quran_memorization/data/quran_text.dart';
+import 'package:quran_memorization/data/quran_translation.dart';
 import 'package:quran_memorization/memorization_calc.dart'
     show MemorizationDirection;
 import 'package:quran_memorization/screens/page_viewer_screen.dart';
@@ -95,6 +97,39 @@ class FakeQuranAudio implements QuranAudio {
   void finish() => _completed.add(null);
 }
 
+/// Quran text fixture matching [fixtureMushaf]'s ayah refs: surah 1 has the
+/// 14 lines' worth (1:1..1:14), surah 2 the 13 (2:1..2:13).
+QuranText fixtureQuranText() {
+  return QuranText.fromJson({
+    'text': [
+      for (var k = 1; k <= 14; k++) 'نص آية 1:$k',
+      for (var k = 1; k <= 13; k++) 'نص آية 2:$k',
+    ],
+    'pages': [
+      [for (var i = 0; i < 14; i++) i],
+      [for (var i = 14; i < 27; i++) i],
+    ],
+    'surahs': [
+      {'s': 1, 'c': 14, 'n': 'الفاتحة', 't': 'Al-Fatihah'},
+      {'s': 2, 'c': 13, 'n': 'البقرة', 't': 'Al-Baqarah'},
+    ],
+  });
+}
+
+/// English translation fixture: all ayahs have a placeholder meaning, with a
+/// few distinctive ones for assertions.
+QuranTranslation fixtureTranslation() {
+  final t = List<String>.filled(QuranTranslation.totalAyahs, 'A meaning.');
+  t[0] = 'Meaning of 1:1';
+  t[6] = 'Meaning of 1:7';
+  t[13] = 'Meaning of 1:14';
+  t[14] = 'Meaning of 2:1';
+  return QuranTranslation.fromJson({
+    'meta': {'edition': 'en.sahih'},
+    'translation': t,
+  });
+}
+
 Widget harness(
   int page,
   double linesPerDay,
@@ -102,6 +137,8 @@ Widget harness(
   MemorizationDirection direction = MemorizationDirection.forward,
   AudioUnitController? unit,
   int reviewDays = 0,
+  QuranText? quran,
+  QuranTranslation? translation,
 }) {
   return MaterialApp(
     home: PageViewerScreen(
@@ -112,6 +149,8 @@ Widget harness(
       audio: audio,
       unit: unit,
       reviewDays: reviewDays,
+      quran: quran,
+      translation: translation,
     ),
   );
 }
@@ -633,6 +672,100 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('meanings toggle shows translation under each ayah', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(
+      1,
+      5,
+      FakeQuranAudio(),
+      quran: fixtureQuranText(),
+      translation: fixtureTranslation(),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.translate), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.translate));
+    await tester.pumpAndSettle();
+
+    // The mushaf card is replaced by per-ayah meanings.
+    expect(find.byKey(const ValueKey('mushaf-frame')), findsNothing);
+    expect(find.text('Meaning of 1:1'), findsOneWidget);
+    expect(find.text('نص آية 1:1'), findsOneWidget);
+    // A later ayah (page 1 covers 1:1..1:14 in the fixture).
+    await tester.scrollUntilVisible(
+      find.text('Meaning of 1:14'),
+      200,
+    );
+    expect(find.text('نص آية 1:14'), findsOneWidget);
+  });
+
+  testWidgets('meanings view highlights today\'s ayahs', (tester) async {
+    await tester.pumpWidget(harness(
+      1,
+      5,
+      FakeQuranAudio(),
+      quran: fixtureQuranText(),
+      translation: fixtureTranslation(),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.translate));
+    await tester.pumpAndSettle();
+
+    BoxDecoration decorationOf(String key) =>
+        tester.widget<Container>(find.byKey(ValueKey(key))).decoration!
+            as BoxDecoration;
+
+    // First 5 lines are today's portion (forward) -> 1:1..1:5 highlighted;
+    // ayah 1:7 is beyond today's portion. (Read 1:1 before scrolling so its
+    // lazily-built widget isn't disposed.)
+    final highlighted = decorationOf('translation-ayah-1-1');
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('translation-ayah-1-7')),
+      200,
+    );
+    final plain = decorationOf('translation-ayah-1-7');
+    expect(highlighted.color, isNot(equals(plain.color)));
+    expect(highlighted.color, isNotNull);
+  });
+
+  testWidgets('meanings toggle back returns to the mushaf page', (tester) async {
+    await tester.pumpWidget(harness(
+      1,
+      5,
+      FakeQuranAudio(),
+      quran: fixtureQuranText(),
+      translation: fixtureTranslation(),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.translate));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mushaf-frame')), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.menu_book_outlined));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mushaf-frame')), findsOneWidget);
+    expect(find.byIcon(Icons.translate), findsOneWidget);
+    expect(find.text('Meaning of 1:1'), findsNothing);
+  });
+
+  testWidgets('meanings load lazily from the bundled assets', (tester) async {
+    // No injected quran/translation: page 2 so the real asset (surah 2 has
+    // 286 ayahs) covers the fixture's 2:1..2:13 refs.
+    await tester.pumpWidget(harness(2, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.translate));
+    await tester.runAsync(() async {
+      // Let the real asset loads complete outside the fake-async zone.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    });
+    await tester.pumpAndSettle();
+
+    // 2:1 from the real Saheeh International bundle.
+    expect(find.text('Alif, Lam, Meem.'), findsOneWidget);
   });
 
   testWidgets('keeps the printed mushaf page ratio on a wide screen', (

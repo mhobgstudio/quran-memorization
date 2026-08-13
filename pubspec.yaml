@@ -62,6 +62,7 @@ flutter:
   assets:
     - assets/quran_data.json
     - assets/mushaf_lines.json
+    - assets/quran_translation.json
 
   fonts:
     - family: UthmanicHafs

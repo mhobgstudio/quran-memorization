@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
+import '../data/quran_text.dart';
+import '../data/quran_translation.dart';
 import '../memorization_calc.dart' show MemorizationDirection;
 import '../services/audio_player.dart';
 import '../services/audio_unit_controller.dart';
@@ -25,6 +27,8 @@ class PageViewerScreen extends StatefulWidget {
     this.audio,
     this.unit,
     this.reviewDays = 0,
+    this.quran,
+    this.translation,
   });
 
   /// Initial page to show (1..604).
@@ -53,6 +57,14 @@ class PageViewerScreen extends StatefulWidget {
   /// them all for listening, instead of just today's portion.
   final int reviewDays;
 
+  /// Pre-loaded Quran text for the meanings view; when null it is loaded
+  /// lazily the first time meanings are toggled on.
+  final QuranText? quran;
+
+  /// Pre-loaded English translation for the meanings view; when null it is
+  /// loaded lazily the first time meanings are toggled on.
+  final QuranTranslation? translation;
+
   @override
   State<PageViewerScreen> createState() => _PageViewerScreenState();
 }
@@ -80,9 +92,18 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   bool _started = false;
   StreamSubscription<void>? _audioSub;
 
+  /// Meanings view (translation under each ayah) toggle state.
+  bool _showTranslation = false;
+  bool _translationLoading = false;
+  String? _translationError;
+  QuranText? _quran;
+  QuranTranslation? _translation;
+
   @override
   void initState() {
     super.initState();
+    _quran = widget.quran;
+    _translation = widget.translation;
     _page = widget.page.clamp(1, MushafData.totalPages).toInt();
     final unit = widget.unit;
     if (unit != null) {
@@ -383,7 +404,21 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Page $_page'), centerTitle: false),
+      appBar: AppBar(
+        title: Text('Page $_page'),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            icon: Icon(
+              _showTranslation ? Icons.menu_book_outlined : Icons.translate,
+            ),
+            tooltip: _showTranslation
+                ? 'Back to the mushaf page'
+                : 'Show meanings',
+            onPressed: _toggleTranslation,
+          ),
+        ],
+      ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -429,15 +464,18 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                   _goToPage(-1);
                 }
               },
-              // The printed Madani full-view page is 699×1020 (h/w ≈ 1.4592).
-              // Lock the card to that ratio and center it so it never warps
-              // to the screen — it scales, keeping the mushaf's real shape.
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 0.6853,
-                  child: _mushafCard(context, page, highlighted),
-                ),
-              ),
+              child: _showTranslation
+                  ? _translationView(context, page, highlighted)
+                  : // The printed Madani full-view page is 699×1020
+                  // (h/w ≈ 1.4592). Lock the card to that ratio and center
+                  // it so it never warps to the screen — it scales, keeping
+                  // the mushaf's real shape.
+                  Center(
+                      child: AspectRatio(
+                        aspectRatio: 0.6853,
+                        child: _mushafCard(context, page, highlighted),
+                      ),
+                    ),
             ),
           ),
         ),
@@ -458,6 +496,194 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Toggles the meanings view. The Quran text and translation are bundled
+  /// assets, loaded lazily on first use so startup stays fast; errors are
+  /// surfaced inside the panel with a retry.
+  Future<void> _toggleTranslation() async {
+    if (_showTranslation) {
+      setState(() => _showTranslation = false);
+      return;
+    }
+    if (_quran != null && _translation != null) {
+      setState(() => _showTranslation = true);
+      return;
+    }
+    setState(() {
+      _translationLoading = true;
+      _translationError = null;
+    });
+    try {
+      final results = await Future.wait([
+        QuranText.load(),
+        QuranTranslation.load(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _quran = results[0] as QuranText;
+        _translation = results[1] as QuranTranslation;
+        _translationLoading = false;
+        _showTranslation = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _translationLoading = false;
+        _translationError = 'Could not load meanings: $e';
+      });
+    }
+  }
+
+  /// The meanings view: every ayah on the page, Arabic with the English
+  /// translation underneath, today's ayahs highlighted.
+  Widget _translationView(
+    BuildContext context,
+    MushafPage page,
+    Set<int> highlighted,
+  ) {
+    if (_translationLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final error = _translationError;
+    if (error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(error, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              FilledButton.tonal(
+                onPressed: _toggleTranslation,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final quran = _quran;
+    final translation = _translation;
+    if (quran == null || translation == null) {
+      return const SizedBox.shrink();
+    }
+
+    // (line index, surah, ayah) in reading order. Line verse ranges overlap
+    // at ayah boundaries (a line ending mid-ayah and the next continuing it
+    // both list that ayah), so collapse consecutive duplicates.
+    final ayahs = <({int line, int surah, int ayah})>[];
+    for (var i = 0; i < page.lines.length; i++) {
+      for (final ref in page.lines[i].ayahRefs) {
+        final parts = ref.split(':');
+        final s = int.parse(parts[0]);
+        final a = int.parse(parts[1]);
+        if (ayahs.isEmpty ||
+            ayahs.last.surah != s ||
+            ayahs.last.ayah != a) {
+          ayahs.add((line: i, surah: s, ayah: a));
+        }
+      }
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: ayahs.length,
+      itemBuilder: (context, index) {
+        final entry = ayahs[index];
+        final isToday = highlighted.contains(entry.line);
+        return _translationAyahCard(
+          surah: entry.surah,
+          ayah: entry.ayah,
+          arabic: quran.ayahAtRef(entry.surah, entry.ayah).text,
+          english: translation.translationAt(
+            quran.globalIndex(entry.surah, entry.ayah),
+          ),
+          isToday: isToday,
+          dark: dark,
+          scheme: scheme,
+          textTheme: textTheme,
+        );
+      },
+    );
+  }
+
+  /// One ayah in the meanings view: reference badge, the Uthmani Arabic,
+  /// and the English meaning beneath. Today's ayahs get the highlight tint.
+  Widget _translationAyahCard({
+    required int surah,
+    required int ayah,
+    required String arabic,
+    required String english,
+    required bool isToday,
+    required bool dark,
+    required ColorScheme scheme,
+    required TextTheme textTheme,
+  }) {
+    final base = dark ? const Color(0xFF211E1A) : const Color(0xFFFFFDF5);
+    return Container(
+      key: ValueKey('translation-ayah-$surah-$ayah'),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: isToday
+            ? scheme.primaryContainer.withValues(alpha: dark ? 0.35 : 0.55)
+            : base,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isToday
+              ? scheme.primary.withValues(alpha: 0.5)
+              : scheme.outlineVariant.withValues(alpha: 0.4),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: 0.8),
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${toArabicIndic(surah)}:${toArabicIndic(ayah)}',
+                style: textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            arabic,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontFamily: _fontFamily,
+              fontSize: 22,
+              height: 1.9,
+              color: dark ? const Color(0xFFF0EDE4) : const Color(0xFF231F1A),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            english,
+            style: textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

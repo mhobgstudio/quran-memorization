@@ -48,6 +48,9 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
   so it works whether you memorize from page 1 or from page 604
 - **Fast mushaf navigation** — tap the page number in the viewer to jump
   straight to any page, or swipe left/right on the page to flip
+- **Meanings view** — the translate button shows every ayah of the page with
+  the English meaning (Saheeh International, bundled offline) beneath the
+  Uthmani text; today's ayahs stay highlighted
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

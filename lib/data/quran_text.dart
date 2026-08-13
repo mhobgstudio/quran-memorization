@@ -123,6 +123,21 @@ class QuranText {
     );
   }
 
+  /// The ayah at surah [surah] ayah [ayah] (both 1-based).
+  Ayah ayahAtRef(int surah, int ayah) => ayahAt(globalIndex(surah, ayah));
+
+  /// Global index (0-based; 0 = 1:1, 6235 = 114:6) of surah [surah] ayah
+  /// [ayah] (both 1-based) — the same order as the translation asset.
+  int globalIndex(int surah, int ayah) {
+    if (surah < 1 || surah > _surahs.length) {
+      throw RangeError.range(surah, 1, _surahs.length, 'surah');
+    }
+    if (ayah < 1 || ayah > _surahs[surah - 1].ayahCount) {
+      throw RangeError.range(ayah, 1, _surahs[surah - 1].ayahCount, 'ayah');
+    }
+    return _surahStart[surah - 1] + ayah - 1;
+  }
+
   void _checkPage(int page) {
     if (page < 1 || page > totalPages) {
       throw RangeError.range(page, 1, totalPages, 'page');
