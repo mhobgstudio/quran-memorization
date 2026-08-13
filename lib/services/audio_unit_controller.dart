@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../data/quran_audio.dart';
 import '../memorization_calc.dart' show MemorizationDirection;
 import 'audio_player.dart';
+import 'audio_settings.dart';
 
 /// App-level audio state so today's unit keeps playing after the mushaf
 /// viewer is closed — the planner screen shows a persistent mini player that
@@ -16,8 +17,11 @@ import 'audio_player.dart';
 /// In [echo] mode the unit plays one ayah at a time and auto-pauses after
 /// each one (listen-and-repeat): the next [toggle] plays the following ayah.
 class AudioUnitController extends ChangeNotifier {
-  AudioUnitController({QuranAudio? audio})
-    : _audio = audio ?? JustQuranAudio() {
+  AudioUnitController({QuranAudio? audio, AudioSettings? settings})
+    : _audio = audio ?? JustQuranAudio(),
+      _repeat = (settings ?? const AudioSettings()).repeat,
+      _reciter = (settings ?? const AudioSettings()).reciter,
+      _speed = (settings ?? const AudioSettings()).speed {
     _sub = _audio.onCompleted.listen((_) {
       if (_echo && _urls.isNotEmpty) {
         _ayahIndex = (_ayahIndex + 1) % _urls.length;
@@ -166,6 +170,27 @@ class AudioUnitController extends ChangeNotifier {
       _playing = false;
     }
     notifyListeners();
+  }
+
+  /// Persists a new default for the audio bar (reciter, speed, repeat) so
+  /// it survives restarts. The next [play] call still carries the exact
+  /// values the viewer passes; these fields are the fallback defaults used
+  /// when a fresh viewer opens without an active unit.
+  Future<void> saveDefaults({
+    Reciter? reciter,
+    double? speed,
+    int? repeat,
+  }) {
+    final settings = AudioSettings(
+      reciter: reciter ?? _reciter,
+      speed: speed ?? _speed,
+      repeat: repeat ?? _repeat,
+    );
+    _repeat = settings.repeat;
+    _reciter = settings.reciter;
+    _speed = settings.speed;
+    notifyListeners();
+    return settings.save();
   }
 
   /// Applies a new playback speed immediately (even mid-unit); the next

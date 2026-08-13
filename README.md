@@ -33,6 +33,9 @@ At page 150, memorizing 10 lines/day (⅔ page), every day:
 - **Persistent mini player** — the unit keeps playing after you close the
   mushaf viewer: the planner shows a mini player bar to pause/resume, dismiss
   it, or tap to reopen the viewer right at that page with the same settings
+- **Saved audio preferences** — your chosen reciter, playback speed, and
+  repeat count are remembered across app restarts (shared_preferences), so
+  the audio bar opens with your last-used settings
 - Live calculation as you type — no submit button
 - Page stepper (+/−), number field, and slider (1–604)
 - Segmented toggle: lines/day ↔ fraction of page/day with instant equivalence

@@ -822,6 +822,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                       selected: {_repeat},
                       onSelectionChanged: (selection) {
                         setState(() => _repeat = selection.first);
+                        final unit = widget.unit;
+                        if (unit != null) {
+                          unawaited(unit.saveDefaults(repeat: selection.first));
+                        }
                       },
                       showSelectedIcon: false,
                       style: const ButtonStyle(
@@ -857,6 +861,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           }
                         }
                         setState(() => _reciter = reciter);
+                        final unit = widget.unit;
+                        if (unit != null) {
+                          unawaited(unit.saveDefaults(reciter: reciter));
+                        }
                       },
                     ),
                   ],
@@ -886,6 +894,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                         setState(() => _speed = speed);
                         final unit = widget.unit;
                         if (unit != null) {
+                          unawaited(unit.saveDefaults(speed: speed));
                           unit.setSpeed(speed);
                         } else {
                           _audio.setSpeed(speed);

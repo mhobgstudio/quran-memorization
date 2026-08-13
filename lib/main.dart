@@ -3,10 +3,15 @@ import 'package:flutter/services.dart';
 
 import 'memorization_calc.dart';
 import 'screens/page_viewer_screen.dart';
+import 'services/audio_settings.dart';
 import 'services/audio_unit_controller.dart';
 
-void main() {
-  runApp(QuranMemorizationApp(unit: AudioUnitController()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Restore the user's last-used reciter/speed/repeat before the first frame
+  // so the audio bar opens with their saved preferences.
+  final settings = await AudioSettings.load();
+  runApp(QuranMemorizationApp(unit: AudioUnitController(settings: settings)));
 }
 
 class QuranMemorizationApp extends StatelessWidget {

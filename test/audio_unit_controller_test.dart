@@ -5,7 +5,9 @@ import 'package:quran_memorization/data/quran_audio.dart';
 import 'package:quran_memorization/services/audio_player.dart';
 import 'package:quran_memorization/memorization_calc.dart'
     show MemorizationDirection;
+import 'package:quran_memorization/services/audio_settings.dart';
 import 'package:quran_memorization/services/audio_unit_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeAudio implements QuranAudio {
   final _completed = StreamController<void>();
@@ -213,5 +215,56 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(unit.playing, isFalse);
     expect(unit.hasUnit, isTrue, reason: 'the mini player stays dismissible');
+  });
+
+  test('initializes defaults from AudioSettings', () {
+    final unit = AudioUnitController(
+      audio: _FakeAudio(),
+      settings: const AudioSettings(
+        reciter: Reciter.sudais,
+        speed: 2.0,
+        repeat: 5,
+      ),
+    );
+    expect(unit.reciter, Reciter.sudais);
+    expect(unit.speed, 2.0);
+    expect(unit.repeat, 5);
+    unit.dispose();
+  });
+
+  test('saveDefaults updates the getters and persists', () async {
+    SharedPreferences.setMockInitialValues({});
+    final unit = AudioUnitController(audio: _FakeAudio());
+
+    await unit.saveDefaults(
+      reciter: Reciter.minshawi,
+      speed: 0.75,
+      repeat: 0,
+    );
+
+    expect(unit.reciter, Reciter.minshawi);
+    expect(unit.speed, 0.75);
+    expect(unit.repeat, 0);
+
+    final loaded = await AudioSettings.load();
+    expect(loaded.reciter, Reciter.minshawi);
+    expect(loaded.speed, 0.75);
+    expect(loaded.repeat, 0);
+    unit.dispose();
+  });
+
+  test('saveDefaults with nulls keeps the current values', () async {
+    SharedPreferences.setMockInitialValues({});
+    final unit = AudioUnitController(
+      audio: _FakeAudio(),
+      settings: const AudioSettings(reciter: Reciter.husary, speed: 1.5),
+    );
+
+    await unit.saveDefaults(repeat: 5);
+
+    expect(unit.reciter, Reciter.husary);
+    expect(unit.speed, 1.5);
+    expect(unit.repeat, 5);
+    unit.dispose();
   });
 }

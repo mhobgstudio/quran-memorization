@@ -8,6 +8,9 @@ import 'package:quran_memorization/memorization_calc.dart'
     show MemorizationDirection;
 import 'package:quran_memorization/screens/page_viewer_screen.dart';
 import 'package:quran_memorization/services/audio_player.dart';
+import 'package:quran_memorization/services/audio_settings.dart';
+import 'package:quran_memorization/services/audio_unit_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Fixture modeled on the real asset schema: page 1 = surah 1 with 14 text
 /// lines (1:1..1:14), page 2 = surah 2 with basmala + 13 text lines
@@ -97,6 +100,7 @@ Widget harness(
   double linesPerDay,
   FakeQuranAudio audio, {
   MemorizationDirection direction = MemorizationDirection.forward,
+  AudioUnitController? unit,
 }) {
   return MaterialApp(
     home: PageViewerScreen(
@@ -105,6 +109,7 @@ Widget harness(
       direction: direction,
       mushaf: fixtureMushaf(),
       audio: audio,
+      unit: unit,
     ),
   );
 }
@@ -441,5 +446,22 @@ void main() {
     );
     expect(button.onPressed, isNull);
     expect(find.textContaining('first 0 of 14'), findsOneWidget);
+  });
+  testWidgets('changing the repeat selector persists the new default', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final unit = AudioUnitController(audio: FakeQuranAudio());
+
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio(), unit: unit));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('5'));
+    await tester.pumpAndSettle();
+
+    final loaded = await AudioSettings.load();
+    expect(loaded.repeat, 5);
+    expect(unit.repeat, 5);
+    unit.dispose();
   });
 }
