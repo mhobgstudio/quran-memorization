@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemChrome, SystemUiMode;
 
 import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
@@ -108,6 +109,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   QuranText? _quran;
   QuranTranslation? _translation;
 
+  /// Whether the mushaf fills the screen with the app chrome hidden. Toggled
+  /// by tapping the page body or the app bar's fullscreen button.
+  bool _fullscreen = false;
+
   /// Reminder service for the alarm button; falls back to the shared
   /// uninitialized instance so scheduling fails gracefully in tests.
   late final ReminderService _reminder;
@@ -159,6 +164,11 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
   @override
   void dispose() {
+    if (_fullscreen) {
+      // Leaving the screen while in fullscreen must not leave the app's
+      // system UI hidden.
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     final unit = widget.unit;
     if (unit != null) {
       unit.removeListener(_onUnitChanged);
@@ -491,42 +501,67 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Page $_page'),
-        centerTitle: false,
-        actions: [
-          IconButton(
-            icon: Icon(
-              _reminderActive ? Icons.alarm_on : Icons.alarm_add_outlined,
-              color: _reminderActive
-                  ? Theme.of(context).colorScheme.primary
-                  : null,
-            ),
-            tooltip: _reminderTooltip,
-            onPressed: _openReminderSheet,
-          ),
-          IconButton(
-            icon: Icon(
-              _showTranslation ? Icons.menu_book_outlined : Icons.translate,
-            ),
-            tooltip: _showTranslation
-                ? 'Back to the mushaf page'
-                : 'Show meanings',
-            onPressed: _toggleTranslation,
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(_error!, textAlign: TextAlign.center),
+      appBar: _fullscreen
+          ? null
+          : AppBar(
+              title: Text('Page $_page'),
+              centerTitle: false,
+              actions: [
+                IconButton(
+                  icon: Icon(
+                    _reminderActive
+                        ? Icons.alarm_on
+                        : Icons.alarm_add_outlined,
+                    color: _reminderActive
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                  tooltip: _reminderTooltip,
+                  onPressed: _openReminderSheet,
                 ),
-              )
-            : _buildBody(context),
+                IconButton(
+                  icon: const Icon(Icons.fullscreen),
+                  tooltip: 'Fullscreen',
+                  onPressed: _toggleFullscreen,
+                ),
+                IconButton(
+                  icon: Icon(
+                    _showTranslation
+                        ? Icons.menu_book_outlined
+                        : Icons.translate,
+                  ),
+                  tooltip: _showTranslation
+                      ? 'Back to the mushaf page'
+                      : 'Show meanings',
+                  onPressed: _toggleTranslation,
+                ),
+              ],
+            ),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(_error!, textAlign: TextAlign.center),
+                    ),
+                  )
+                : _buildBody(context),
+            if (_fullscreen && !_loading && _error == null)
+              Positioned(
+                top: 8,
+                right: 12,
+                child: IconButton.filledTonal(
+                  icon: const Icon(Icons.fullscreen_exit),
+                  tooltip: 'Exit fullscreen',
+                  onPressed: _toggleFullscreen,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -542,17 +577,22 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
     return Column(
       children: [
-        _topBar(scheme, textTheme),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _todayChip(scheme, textTheme, today, total, whole),
-        ),
+        if (!_fullscreen) _topBar(scheme, textTheme),
+        if (!_fullscreen)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _todayChip(scheme, textTheme, today, total, whole),
+          ),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            // Swipe left for the next page, right for the previous one.
+            padding: _fullscreen
+                ? EdgeInsets.zero
+                : const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            // Swipe left for the next page, right for the previous one; tap
+            // anywhere to toggle fullscreen.
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
+              onTap: _toggleFullscreen,
               onHorizontalDragEnd: (details) {
                 final v = details.primaryVelocity ?? 0;
                 if (v <= -250) {
@@ -576,24 +616,45 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             ),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
-          child: _audioBar(scheme, textTheme),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            widget.reviewDays > 0
-                ? "Highlighted lines are the last ${widget.reviewDays} days — the audio queues them oldest-first."
-                : "Highlighted lines are today's portion — the audio plays exactly those ayahs.",
-            textAlign: TextAlign.center,
-            style: textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
+        if (!_fullscreen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+            child: _audioBar(scheme, textTheme),
+          ),
+        if (!_fullscreen)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              widget.reviewDays > 0
+                  ? "Highlighted lines are the last ${widget.reviewDays} days — the audio queues them oldest-first."
+                  : "Highlighted lines are today's portion — the audio plays exactly those ayahs.",
+              textAlign: TextAlign.center,
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ),
-        ),
       ],
     );
+  }
+
+  /// Toggles immersive fullscreen: hides the app bar, audio bar and system
+  /// chrome so the mushaf fills the screen.
+  void _toggleFullscreen() => _setFullscreen(!_fullscreen);
+
+  Future<void> _setFullscreen(bool value) async {
+    if (value == _fullscreen) return;
+    setState(() => _fullscreen = value);
+    try {
+      if (value) {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    } catch (_) {
+      // System UI control isn't available everywhere (desktop, tests):
+      // fullscreen still works, just without hiding the status bar.
+    }
   }
 
   /// Toggles the meanings view. The Quran text and translation are bundled

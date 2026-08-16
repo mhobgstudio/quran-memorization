@@ -802,4 +802,60 @@ void main() {
     expect(ratio, closeTo(0.6853, 0.01));
     expect(size.width, lessThan(1000));
   });
+
+  testWidgets('tapping the page body toggles fullscreen and hides the chrome', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    // Normal mode: app bar, audio bar and hint are visible.
+    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+    expect(
+      find.textContaining("Highlighted lines are today's portion"),
+      findsOneWidget,
+    );
+
+    // Tap the page body (the mushaf area) to enter fullscreen.
+    await tester.tap(find.byKey(const ValueKey('mushaf-frame')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Page 1'), findsNothing); // app bar gone
+    expect(find.byIcon(Icons.play_arrow), findsNothing); // audio bar gone
+    expect(
+      find.textContaining("Highlighted lines are today's portion"),
+      findsNothing,
+    );
+    expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget); // exit button
+
+    // Tap again to leave fullscreen.
+    await tester.tap(find.byIcon(Icons.fullscreen_exit));
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+  });
+
+  testWidgets('app bar fullscreen button toggles fullscreen too', (
+    tester,
+  ) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.fullscreen));
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsNothing);
+    expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
+
+    // Swiping still changes the page while fullscreen.
+    await tester.flingFrom(const Offset(400, 300), const Offset(-400, 0), 1000);
+    await tester.pumpAndSettle();
+    // App bar still hidden, and the page header band now shows page ٢.
+    expect(find.text('Page 2'), findsNothing);
+    expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
+    final number = tester.widget<Text>(
+      find.byKey(const ValueKey('page-header-number')),
+    );
+    expect(number.data, '٢');
+  });
 }
