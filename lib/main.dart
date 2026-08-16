@@ -7,6 +7,7 @@ import 'services/audio_settings.dart';
 import 'services/audio_unit_controller.dart';
 import 'services/memorization_log.dart';
 import 'services/planner_settings.dart';
+import 'services/reminder_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,11 +17,17 @@ Future<void> main() async {
   final audio = await AudioSettings.load();
   final planner = await PlannerSettings.load();
   final log = await MemorizationLog.load();
+  // Set up the daily reminder and learn whether this launch was caused by
+  // tapping it (cold start) so we can deep-link to the reminder's page.
+  final reminder = ReminderService();
+  final launchPage = await reminder.initialize();
   runApp(
     QuranMemorizationApp(
       unit: AudioUnitController(settings: audio),
       plannerSettings: planner,
       log: log,
+      reminder: reminder,
+      initialReminderPage: launchPage,
     ),
   );
 }
@@ -31,6 +38,8 @@ class QuranMemorizationApp extends StatefulWidget {
     this.unit,
     this.plannerSettings = const PlannerSettings(),
     this.log = const MemorizationLog(),
+    this.reminder,
+    this.initialReminderPage,
   });
 
   /// Shared app-level audio unit so today's portion keeps playing after the
@@ -43,12 +52,82 @@ class QuranMemorizationApp extends StatefulWidget {
   /// Restored completion history (mark-today-done + streak).
   final MemorizationLog log;
 
+  /// Daily reminder service; when null no reminder UI is offered.
+  final ReminderService? reminder;
+
+  /// Target page when this launch was triggered by tapping the reminder
+  /// notification (cold start); the viewer opens on it after the first frame.
+  final int? initialReminderPage;
+
   @override
   State<QuranMemorizationApp> createState() => _QuranMemorizationAppState();
 }
 
 class _QuranMemorizationAppState extends State<QuranMemorizationApp> {
+  /// Root navigator so notification taps can push the mushaf viewer no matter
+  /// which screen is currently visible.
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  /// Last page opened via a reminder tap, with the moment it happened. A tap
+  /// that cold-starts the app can reach us twice (once through the launch
+  /// details, once through the response callback), so identical pages opened
+  /// within this window are collapsed into one navigation.
+  int? _lastReminderPage;
+  DateTime _lastReminderOpenedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   late ThemeMode _themeMode = widget.plannerSettings.themeMode;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.reminder?.onTap = _openReminderPage;
+    final initialPage = widget.initialReminderPage;
+    if (initialPage != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openReminderPage(initialPage);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    // Don't leave a dangling reference to this app's state.
+    if (widget.reminder?.onTap == _openReminderPage) {
+      widget.reminder?.onTap = null;
+    }
+    super.dispose();
+  }
+
+  /// Opens the mushaf viewer at the page carried by the reminder notification,
+  /// using the planner's persisted settings (rate → lines/day, direction) and
+  /// the shared audio unit.
+  Future<void> _openReminderPage(int page) async {
+    final now = DateTime.now();
+    final justOpened =
+        _lastReminderPage == page &&
+        now.difference(_lastReminderOpenedAt).inSeconds < 3;
+    _lastReminderPage = page;
+    _lastReminderOpenedAt = now;
+    if (justOpened) return;
+
+    final settings = await PlannerSettings.load();
+    final pagesPerDay = settings.rateIsLines
+        ? settings.rate / MemorizationPlan.linesPerPage
+        : settings.rate;
+    final nav = _navigatorKey.currentState;
+    if (nav == null || !mounted) return;
+    nav.push(
+      MaterialPageRoute<void>(
+        builder: (_) => PageViewerScreen(
+          page: page,
+          linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
+          direction: settings.direction,
+          unit: widget.unit,
+          reminder: widget.reminder,
+        ),
+      ),
+    );
+  }
 
   void _setThemeMode(ThemeMode mode) {
     if (mode == _themeMode) return;
@@ -65,6 +144,7 @@ class _QuranMemorizationAppState extends State<QuranMemorizationApp> {
     return MaterialApp(
       title: 'Hifz Planner',
       debugShowCheckedModeBanner: false,
+      navigatorKey: _navigatorKey,
       themeMode: _themeMode,
       theme: ThemeData(
         colorScheme: colorScheme,
@@ -91,6 +171,7 @@ class _QuranMemorizationAppState extends State<QuranMemorizationApp> {
         log: widget.log,
         themeMode: _themeMode,
         onThemeModeChanged: _setThemeMode,
+        reminder: widget.reminder,
       ),
     );
   }
@@ -106,6 +187,7 @@ class PlannerScreen extends StatefulWidget {
     this.log = const MemorizationLog(),
     this.themeMode = ThemeMode.system,
     this.onThemeModeChanged,
+    this.reminder,
   });
 
   /// Shared audio unit backing the persistent mini player (optional; tests
@@ -123,6 +205,10 @@ class PlannerScreen extends StatefulWidget {
 
   /// Called when the user picks a different theme.
   final ValueChanged<ThemeMode>? onThemeModeChanged;
+
+  /// Daily reminder service threaded through to the mushaf viewer so the
+  /// "set reminder" action works from any entry point; optional (tests).
+  final ReminderService? reminder;
 
   @override
   State<PlannerScreen> createState() => _PlannerScreenState();
@@ -145,7 +231,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
     _rateController = TextEditingController(
       text: _trimInput(widget.settings.rate),
     )..addListener(_onChanged);
-    _rateMode = widget.settings.rateIsLines ? RateMode.lines : RateMode.fraction;
+    _rateMode = widget.settings.rateIsLines
+        ? RateMode.lines
+        : RateMode.fraction;
     _direction = widget.settings.direction;
     _restWeekdays = {...widget.settings.restWeekdays};
     _startDate = widget.settings.startDate;
@@ -272,6 +360,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
           linesPerDay: _effectiveLinesPerDay(),
           direction: _direction,
           unit: widget.unit,
+          reminder: widget.reminder,
         ),
       ),
     );
@@ -289,6 +378,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
           direction: _direction,
           unit: widget.unit,
           reviewDays: reviewDays,
+          reminder: widget.reminder,
         ),
       ),
     );
@@ -304,6 +394,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
           linesPerDay: unit.linesPerDay,
           direction: unit.direction,
           unit: unit,
+          reminder: widget.reminder,
         ),
       ),
     );
@@ -335,13 +426,11 @@ class _PlannerScreenState extends State<PlannerScreen> {
         actions: [
           PopupMenuButton<ThemeMode>(
             key: const ValueKey('theme-toggle'),
-            icon: Icon(
-              switch (widget.themeMode) {
-                ThemeMode.light => Icons.light_mode_outlined,
-                ThemeMode.dark => Icons.dark_mode_outlined,
-                ThemeMode.system => Icons.brightness_auto_outlined,
-              },
-            ),
+            icon: Icon(switch (widget.themeMode) {
+              ThemeMode.light => Icons.light_mode_outlined,
+              ThemeMode.dark => Icons.dark_mode_outlined,
+              ThemeMode.system => Icons.brightness_auto_outlined,
+            }),
             tooltip: 'Theme',
             initialValue: widget.themeMode,
             onSelected: widget.onThemeModeChanged,
@@ -470,21 +559,17 @@ class _PlannerScreenState extends State<PlannerScreen> {
                               children: [
                                 Text(
                                   'Plan starts',
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
                                 ),
                                 Text(
                                   _startDate == null
                                       ? 'Today (${formatDate(DateTime.now())})'
                                       : formatDate(_startDate!),
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.w600),
                                 ),
                               ],
                             ),
@@ -722,7 +807,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
       helpText: 'When does your plan start?',
     );
     if (picked == null || !mounted) return;
-    setState(() => _startDate = DateTime(picked.year, picked.month, picked.day));
+    setState(
+      () => _startDate = DateTime(picked.year, picked.month, picked.day),
+    );
     _saveSettings();
   }
 
@@ -796,9 +883,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
               children: [
                 Icon(
                   doneToday ? Icons.check_circle : Icons.flag_outlined,
-                  color: doneToday
-                      ? scheme.primary
-                      : scheme.onSurfaceVariant,
+                  color: doneToday ? scheme.primary : scheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -846,16 +931,14 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 children: [
                   _statBlock('$streak', 'day streak', scheme),
                   _statBlock('${_log.totalSessions}', 'sessions', scheme),
-                  _statBlock(
-                    _trim(_log.totalLines),
-                    'lines memorized',
-                    scheme,
-                  ),
+                  _statBlock(_trim(_log.totalLines), 'lines memorized', scheme),
                 ],
               ),
               const SizedBox(height: 8),
               if (latest != null &&
-                  !latest.date.isBefore(DateTime(today.year, today.month, today.day - 6)))
+                  !latest.date.isBefore(
+                    DateTime(today.year, today.month, today.day - 6),
+                  ))
                 Text(
                   'Last session: ${_shortDate(latest.date)} — '
                   'page ${latest.page} · ${_trim(latest.lines)} lines.',
@@ -872,8 +955,18 @@ class _PlannerScreenState extends State<PlannerScreen> {
 
   static String _shortDate(DateTime d) {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -999,7 +1092,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
             ),
             Text(
               '${hijriDateString(result.finishDate)}'
-              '${isDone ? '' : ' · ${humanizeDays(result.calendarDays)}'}' ,
+              '${isDone ? '' : ' · ${humanizeDays(result.calendarDays)}'}',
               style: textTheme.bodySmall?.copyWith(
                 color: scheme.onPrimaryContainer.withValues(alpha: 0.7),
               ),

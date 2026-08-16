@@ -7,9 +7,12 @@ import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
 import '../data/quran_text.dart';
 import '../data/quran_translation.dart';
+import '../data/encouraging_verses.dart';
 import '../memorization_calc.dart' show MemorizationDirection;
 import '../services/audio_player.dart';
 import '../services/audio_unit_controller.dart';
+import '../services/reminder_service.dart';
+import '../services/reminder_settings.dart';
 
 /// Displays one page of the mushaf exactly as printed: a header band with the
 /// surah name, juz and page number, the 15 justified Uthmani lines, ayah-end
@@ -29,6 +32,7 @@ class PageViewerScreen extends StatefulWidget {
     this.reviewDays = 0,
     this.quran,
     this.translation,
+    this.reminder,
   });
 
   /// Initial page to show (1..604).
@@ -65,6 +69,11 @@ class PageViewerScreen extends StatefulWidget {
   /// loaded lazily the first time meanings are toggled on.
   final QuranTranslation? translation;
 
+  /// Daily reminder service backing the alarm button in the app bar; when
+  /// null a shared uninitialized instance is used (tests, previews), and
+  /// scheduling degrades to a no-op instead of crashing.
+  final ReminderService? reminder;
+
   @override
   State<PageViewerScreen> createState() => _PageViewerScreenState();
 }
@@ -99,9 +108,18 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   QuranText? _quran;
   QuranTranslation? _translation;
 
+  /// Reminder service for the alarm button; falls back to the shared
+  /// uninitialized instance so scheduling fails gracefully in tests.
+  late final ReminderService _reminder;
+
+  /// The persisted reminder config (null until the first load completes).
+  ReminderSettings? _reminderSettings;
+
   @override
   void initState() {
     super.initState();
+    _reminder = widget.reminder ?? ReminderService.shared;
+    _loadReminderSettings();
     _quran = widget.quran;
     _translation = widget.translation;
     _page = widget.page.clamp(1, MushafData.totalPages).toInt();
@@ -385,6 +403,75 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     if (target != null && mounted) _jumpToPage(target);
   }
 
+  Future<void> _loadReminderSettings() async {
+    final settings = await ReminderSettings.load();
+    if (!mounted) return;
+    setState(() => _reminderSettings = settings);
+  }
+
+  bool get _reminderActive =>
+      _reminderSettings?.enabled == true && _reminderSettings?.page == _page;
+
+  /// Label under the alarm icon: the reminder's target page when one is
+  /// scheduled, otherwise a hint that tapping opens the setup sheet.
+  String get _reminderTooltip {
+    final settings = _reminderSettings;
+    if (settings == null) return 'Daily reminder';
+    if (!settings.enabled) return 'Daily reminder — set one';
+    return 'Daily reminder · page ${settings.page} '
+        'at ${_two(settings.hour)}:${_two(settings.minute)}';
+  }
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+
+  /// Opens the reminder setup sheet, then applies the result (schedule,
+  /// persist, update the alarm icon).
+  Future<void> _openReminderSheet() async {
+    final current = _reminderSettings ?? const ReminderSettings();
+    final surah = _mushaf?.page(_page).surah;
+    final result = await showModalBottomSheet<ReminderSettings>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ReminderSheet(
+        initial: current,
+        page: _page,
+        surahNumber: surah,
+        surahName: surah == null
+            ? null
+            : _mushaf!.surahMeta(surah).transliteration,
+      ),
+    );
+    if (result != null && mounted) await _applyReminder(result);
+  }
+
+  /// Schedules/cancels the system notification, persists the config, and
+  /// refreshes the alarm icon. Shows a snack bar when scheduling fails.
+  Future<void> _applyReminder(ReminderSettings settings) async {
+    var ok = true;
+    if (settings.enabled) {
+      ok = await _reminder.schedule(
+        page: settings.page,
+        hour: settings.hour,
+        minute: settings.minute,
+      );
+    } else {
+      await _reminder.cancel();
+    }
+    await settings.save();
+    if (!mounted) return;
+    setState(() => _reminderSettings = settings);
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Couldn\'t schedule the reminder — notifications aren\'t '
+            'available on this device or website.',
+          ),
+        ),
+      );
+    }
+  }
+
   /// Echo-mode repeat count: an infinite loop makes no sense for one-ayah
   /// playback, so it degrades to a single play.
   int get _echoRepeat => _repeat > 0 ? _repeat : 1;
@@ -408,6 +495,16 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         title: Text('Page $_page'),
         centerTitle: false,
         actions: [
+          IconButton(
+            icon: Icon(
+              _reminderActive ? Icons.alarm_on : Icons.alarm_add_outlined,
+              color: _reminderActive
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+            ),
+            tooltip: _reminderTooltip,
+            onPressed: _openReminderSheet,
+          ),
           IconButton(
             icon: Icon(
               _showTranslation ? Icons.menu_book_outlined : Icons.translate,
@@ -467,10 +564,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               child: _showTranslation
                   ? _translationView(context, page, highlighted)
                   : // The printed Madani full-view page is 699×1020
-                  // (h/w ≈ 1.4592). Lock the card to that ratio and center
-                  // it so it never warps to the screen — it scales, keeping
-                  // the mushaf's real shape.
-                  Center(
+                    // (h/w ≈ 1.4592). Lock the card to that ratio and center
+                    // it so it never warps to the screen — it scales, keeping
+                    // the mushaf's real shape.
+                    Center(
                       child: AspectRatio(
                         aspectRatio: 0.6853,
                         child: _mushafCard(context, page, highlighted),
@@ -580,9 +677,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         final parts = ref.split(':');
         final s = int.parse(parts[0]);
         final a = int.parse(parts[1]);
-        if (ayahs.isEmpty ||
-            ayahs.last.surah != s ||
-            ayahs.last.ayah != a) {
+        if (ayahs.isEmpty || ayahs.last.surah != s || ayahs.last.ayah != a) {
           ayahs.add((line: i, surah: s, ayah: a));
         }
       }
@@ -704,7 +799,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               onTap: _openPageJump,
               borderRadius: BorderRadius.circular(6),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 child: Text(
                   '$_page / ${MushafData.totalPages}',
                   style: textTheme.titleMedium?.copyWith(
@@ -934,9 +1032,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             height: fontSize * 0.52,
             width: double.infinity,
             child: CustomPaint(
-              painter: _RibbonPainter(
-                color: color.withValues(alpha: 0.95),
-              ),
+              painter: _RibbonPainter(color: color.withValues(alpha: 0.95)),
             ),
           ),
           const SizedBox(height: 3),
@@ -1125,10 +1221,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   /// Width of an ayah rosette (kept in sync with [_AyahOrnament]).
   double _rosetteWidth(String digits, double fontSize) {
     final height = fontSize * 1.2;
-    return math.max(
-      height,
-      fontSize * (1.05 + 0.42 * (digits.length - 1)),
-    );
+    return math.max(height, fontSize * (1.05 + 0.42 * (digits.length - 1)));
   }
 
   double _measureText(String text, TextStyle style) {
@@ -1146,11 +1239,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   /// justified, evenly distributed spacing — like centered-and-justified
   /// typesetting. Words run right-to-left; each ayah rosette is glued to
   /// the word it follows.
-  Widget _justifiedLine(
-    String text,
-    double fontSize,
-    Color color,
-  ) {
+  Widget _justifiedLine(String text, double fontSize, Color color) {
     final tokens = _tokenize(text);
     if (tokens.isEmpty) return const SizedBox.shrink();
     final style = TextStyle(
@@ -1405,9 +1494,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                           DropdownMenuItem(
                             value: v,
                             child: Text(
-                              v == v.roundToDouble()
-                                  ? '${v.toInt()}×'
-                                  : '$v×',
+                              v == v.roundToDouble() ? '${v.toInt()}×' : '$v×',
                             ),
                           ),
                       ],
@@ -1513,7 +1600,6 @@ class _PageJumpDialogState extends State<_PageJumpDialog> {
     );
   }
 }
-
 
 /// The ornamental ayah-end circle with the Arabic-Indic verse number inside,
 /// as printed in the Madani mushaf.
@@ -1651,20 +1737,14 @@ class _Medallion extends StatelessWidget {
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        border: Border.all(
-          color: color.withValues(alpha: 0.85),
-          width: 1.2,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.85), width: 1.2),
         borderRadius: BorderRadius.circular(size * 0.3),
       ),
       child: Container(
         margin: const EdgeInsets.all(2.4),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          border: Border.all(
-            color: color.withValues(alpha: 0.5),
-            width: 1,
-          ),
+          border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
           borderRadius: BorderRadius.circular(size * 0.2),
         ),
         child: child,
@@ -1738,11 +1818,7 @@ class _MushafFramePainter extends CustomPainter {
     ]) {
       final ox = sx < 0 ? inset : size.width - inset;
       final oy = sy < 0 ? inset : size.height - inset;
-      canvas.drawLine(
-        Offset(ox, oy),
-        Offset(ox + sx * l, oy + sy * l),
-        tick,
-      );
+      canvas.drawLine(Offset(ox, oy), Offset(ox + sx * l, oy + sy * l), tick);
       canvas.drawLine(
         Offset(ox + sx * l * 0.45, oy),
         Offset(ox, oy + sy * l * 0.45),
@@ -1754,4 +1830,177 @@ class _MushafFramePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MushafFramePainter oldDelegate) =>
       oldDelegate.color != color;
+}
+
+/// Bottom sheet for setting the daily memorization reminder from the page
+/// viewer. Edits a local copy of [ReminderSettings] and pops it on save; the
+/// viewer applies it (schedules the notification and persists the config).
+class _ReminderSheet extends StatefulWidget {
+  const _ReminderSheet({
+    required this.initial,
+    required this.page,
+    this.surahNumber,
+    this.surahName,
+  });
+
+  final ReminderSettings initial;
+
+  /// The mushaf page this reminder is being set for (the page on screen).
+  final int page;
+
+  /// Surah of [page], used for the target label (null when layout not loaded).
+  final int? surahNumber;
+
+  /// Transliterated name of [surahNumber] (e.g. "Al-Fātiḥah").
+  final String? surahName;
+
+  @override
+  State<_ReminderSheet> createState() => _ReminderSheetState();
+}
+
+class _ReminderSheetState extends State<_ReminderSheet> {
+  late bool _enabled;
+  late TimeOfDay _time;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.initial.enabled;
+    _time = TimeOfDay(hour: widget.initial.hour, minute: widget.initial.minute);
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(context: context, initialTime: _time);
+    if (picked != null) setState(() => _time = picked);
+  }
+
+  void _save() {
+    Navigator.of(context).pop(
+      ReminderSettings(
+        enabled: _enabled,
+        page: widget.page,
+        hour: _time.hour,
+        minute: _time.minute,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final verse = encouragingVerseFor(DateTime.now());
+    final surahLabel = widget.surahName == null
+        ? null
+        : '${widget.surahName}${widget.surahNumber != null ? ' (${widget.surahNumber})' : ''}';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.alarm, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Daily reminder',
+                    style: textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Switch(
+                  value: _enabled,
+                  onChanged: (v) => setState(() => _enabled = v),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Remind me every day to open '
+              '${surahLabel == null ? 'page ${widget.page}' : 'page ${widget.page} · $surahLabel'} '
+              'and keep memorizing.',
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.schedule),
+              title: const Text('Time'),
+              subtitle: Text(
+                '${_time.hour.toString().padLeft(2, '0')}:'
+                '${_time.minute.toString().padLeft(2, '0')}',
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              trailing: TextButton(
+                onPressed: _enabled ? _pickTime : null,
+                child: const Text('Change'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.secondaryContainer.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'The notification shows an encouraging verse, e.g.',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    verse.arabic,
+                    textAlign: TextAlign.center,
+                    textDirection: TextDirection.rtl,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontSize: 16,
+                      height: 1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '"${verse.translation}" — ${verse.reference}',
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _save,
+                  child: Text(_enabled ? 'Save reminder' : 'Turn off'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
