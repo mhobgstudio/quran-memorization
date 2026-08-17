@@ -380,7 +380,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.pause), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.chevron_right));
+    await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();
     expect(audio.stopped, isTrue);
     expect(find.byIcon(Icons.play_arrow), findsOneWidget);
@@ -390,7 +390,8 @@ void main() {
     await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.chevron_right));
+    // Right-to-left mushaf order: the left chevron goes to the next page.
+    await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();
     expect(find.text('Page 2'), findsOneWidget);
     final surah = tester.widget<Text>(
@@ -398,7 +399,22 @@ void main() {
     );
     expect(surah.data, 'سورة البقرة');
 
-    await tester.tap(find.byIcon(Icons.chevron_left));
+    await tester.tap(find.byIcon(Icons.chevron_right));
+    await tester.pumpAndSettle();
+    expect(find.text('Page 1'), findsOneWidget);
+  });
+
+  testWidgets('swiping follows right-to-left mushaf order', (tester) async {
+    await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
+    await tester.pumpAndSettle();
+
+    // Swipe right (finger moves right) advances to the next page.
+    await tester.flingFrom(const Offset(300, 400), const Offset(400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text('Page 2'), findsOneWidget);
+
+    // Swipe left returns to the previous page.
+    await tester.flingFrom(const Offset(300, 400), const Offset(-400, 0), 1000);
     await tester.pumpAndSettle();
     expect(find.text('Page 1'), findsOneWidget);
   });
@@ -658,32 +674,33 @@ void main() {
     await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
-    // Swipe left -> next page.
+    // Right-to-left mushaf order: swipe right -> next page.
+    await tester.fling(
+      find.byKey(const ValueKey('mushaf-frame')),
+      const Offset(350, 0),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Page 2'), findsOneWidget);
+
+    // Swipe left -> previous page.
     await tester.fling(
       find.byKey(const ValueKey('mushaf-frame')),
       const Offset(-350, 0),
       1000,
     );
     await tester.pumpAndSettle();
-    expect(find.text('Page 2'), findsOneWidget);
-
-    // Swipe right -> previous page.
-    await tester.fling(
-      find.byKey(const ValueKey('mushaf-frame')),
-      const Offset(350, 0),
-      1000,
-    );
-    await tester.pumpAndSettle();
     expect(find.text('Page 1'), findsOneWidget);
   });
 
-  testWidgets('swiping forward from page 1 stays on page 1', (tester) async {
+  testWidgets('swiping backward from page 1 stays on page 1', (tester) async {
     await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
+    // Swipe left (backward in right-to-left order) from page 1 stays put.
     await tester.fling(
       find.byKey(const ValueKey('mushaf-frame')),
-      const Offset(350, 0),
+      const Offset(-350, 0),
       1000,
     );
     await tester.pumpAndSettle();
@@ -847,8 +864,9 @@ void main() {
     expect(find.text('Page 1'), findsNothing);
     expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
 
-    // Swiping still changes the page while fullscreen.
-    await tester.flingFrom(const Offset(400, 300), const Offset(-400, 0), 1000);
+    // Swiping still changes the page while fullscreen (right-to-left order:
+    // swipe right for the next page).
+    await tester.flingFrom(const Offset(400, 300), const Offset(400, 0), 1000);
     await tester.pumpAndSettle();
     // App bar still hidden, and the page header band now shows page ٢.
     expect(find.text('Page 2'), findsNothing);

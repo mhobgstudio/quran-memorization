@@ -588,17 +588,18 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             padding: _fullscreen
                 ? EdgeInsets.zero
                 : const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            // Swipe left for the next page, right for the previous one; tap
-            // anywhere to toggle fullscreen.
+            // Swipe right for the next page, left for the previous one
+            // (right-to-left mushaf reading order); tap anywhere to toggle
+            // fullscreen.
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleFullscreen,
               onHorizontalDragEnd: (details) {
                 final v = details.primaryVelocity ?? 0;
                 if (v <= -250) {
-                  _goToPage(1);
-                } else if (v >= 250) {
                   _goToPage(-1);
+                } else if (v >= 250) {
+                  _goToPage(1);
                 }
               },
               child: _showTranslation
@@ -851,8 +852,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left),
-            tooltip: 'Previous page',
-            onPressed: _page > 1 ? () => _goToPage(-1) : null,
+            tooltip: 'Next page',
+            onPressed: _page < MushafData.totalPages
+                ? () => _goToPage(1)
+                : null,
           ),
           Tooltip(
             message: 'Jump to page',
@@ -875,16 +878,14 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right),
-            tooltip: 'Next page',
-            onPressed: _page < MushafData.totalPages
-                ? () => _goToPage(1)
-                : null,
+            tooltip: 'Previous page',
+            onPressed: _page > 1 ? () => _goToPage(-1) : null,
           ),
           const SizedBox(width: 8),
           Icon(
             widget.direction == MemorizationDirection.backward
-                ? Icons.arrow_back
-                : Icons.arrow_forward,
+                ? Icons.arrow_forward
+                : Icons.arrow_back,
             size: 16,
             color: scheme.onSurfaceVariant,
           ),
