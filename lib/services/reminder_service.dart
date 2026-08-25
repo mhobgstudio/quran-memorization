@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -213,9 +213,15 @@ class ReminderService {
   }) async {
     if (kIsWeb) return false;
     _loadTimezoneDatabase();
-    // Fire-and-forget: when called without [initialize] (widget tests), the
-    // lookup never completes in the fake async zone, so don't await it.
-    unawaited(_applyDeviceTimezone());
+    // When [initialize] already ran the device-timezone lookup, await it
+    // to guarantee the correct local time. In widget tests ([initialize]
+    // was never called) the platform channel never resolves, so we fire
+    // and forget to avoid hanging the test.
+    if (_initialized) {
+      await _applyDeviceTimezone();
+    } else {
+      unawaited(_applyDeviceTimezone());
+    }
     final verse = encouragingVerseFor(DateTime.now());
     final scheduled = _nextDaily(hour, minute);
     try {
@@ -242,7 +248,8 @@ class ReminderService {
         payload: '$page',
       );
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('ReminderService.schedule failed: $e');
       return false;
     }
   }

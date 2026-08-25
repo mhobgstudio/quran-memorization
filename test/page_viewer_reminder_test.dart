@@ -114,7 +114,7 @@ void main() {
     expect(find.byIcon(Icons.alarm_add_outlined), findsOneWidget);
   });
 
-  testWidgets('an existing reminder for another page shows the inactive icon', (
+  testWidgets('an existing reminder for another page still shows the active icon', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -127,8 +127,10 @@ void main() {
     await tester.pumpWidget(harness(1, service));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.alarm_add_outlined), findsOneWidget);
-    // Tooltip mentions the other page and its time.
+    // The alarm icon is active whenever ANY reminder is enabled, even when
+    // the viewer is on a different page.
+    expect(find.byIcon(Icons.alarm_on), findsOneWidget);
+    // Tooltip still mentions the reminder's actual target page.
     expect(find.byTooltip('Daily reminder · page 2 at 07:45'), findsOneWidget);
   });
 }

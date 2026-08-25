@@ -419,8 +419,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     setState(() => _reminderSettings = settings);
   }
 
-  bool get _reminderActive =>
-      _reminderSettings?.enabled == true && _reminderSettings?.page == _page;
+  bool get _reminderActive => _reminderSettings?.enabled == true;
 
   /// Label under the alarm icon: the reminder's target page when one is
   /// scheduled, otherwise a hint that tapping opens the setup sheet.
@@ -438,13 +437,16 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   /// persist, update the alarm icon).
   Future<void> _openReminderSheet() async {
     final current = _reminderSettings ?? const ReminderSettings();
-    final surah = _mushaf?.page(_page).surah;
+    // When a reminder already exists, show its target page so the user
+    // doesn't accidentally overwrite it by saving from a different page.
+    final targetPage = current.enabled ? current.page : _page;
+    final surah = _mushaf?.page(targetPage).surah;
     final result = await showModalBottomSheet<ReminderSettings>(
       context: context,
       isScrollControlled: true,
       builder: (_) => _ReminderSheet(
         initial: current,
-        page: _page,
+        page: targetPage,
         surahNumber: surah,
         surahName: surah == null
             ? null
@@ -467,10 +469,15 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     } else {
       await _reminder.cancel();
     }
-    await settings.save();
-    if (!mounted) return;
-    setState(() => _reminderSettings = settings);
-    if (!ok) {
+    // Only persist and update state when scheduling succeeded (or when
+    // disabling).  If the platform rejected the schedule call, leaving the
+    // old settings avoids a phantom "reminder active" state.
+    if (ok) {
+      await settings.save();
+      if (!mounted) return;
+      setState(() => _reminderSettings = settings);
+    } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
