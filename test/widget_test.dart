@@ -19,7 +19,9 @@ void main() {
     await tester.pumpWidget(const QuranMemorizationApp());
 
     // Inputs present (the list is lazy, so scroll to the lower sections).
+    await scrollToResults(tester, find.text('Current page'));
     expect(find.text('Current page'), findsOneWidget);
+    await scrollToResults(tester, find.text('Daily memorization'));
     expect(find.text('Daily memorization'), findsOneWidget);
     await scrollToResults(tester, find.text('Rest days'));
     expect(find.text('Rest days'), findsOneWidget);
@@ -51,7 +53,8 @@ void main() {
   testWidgets('invalid rate shows guidance instead of a date', (tester) async {
     await tester.pumpWidget(const QuranMemorizationApp());
 
-    await tester.enterText(find.byType(TextField).at(1), '0');
+    await scrollToResults(tester, find.text('Page number'));
+    await tester.enterText(find.byType(TextField).last, '0');
     await tester.pump();
 
     await scrollToResults(tester, find.textContaining('Fill in a valid page'));

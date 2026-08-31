@@ -8,6 +8,7 @@ import 'services/audio_unit_controller.dart';
 import 'services/memorization_log.dart';
 import 'services/planner_settings.dart';
 import 'services/reminder_service.dart';
+import 'services/saved_plans.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +18,7 @@ Future<void> main() async {
   final audio = await AudioSettings.load();
   final planner = await PlannerSettings.load();
   final log = await MemorizationLog.load();
+  final savedPlans = await SavedPlans.load();
   // Set up the daily reminder and learn whether this launch was caused by
   // tapping it (cold start) so we can deep-link to the reminder's page.
   final reminder = ReminderService();
@@ -26,6 +28,7 @@ Future<void> main() async {
       unit: AudioUnitController(settings: audio),
       plannerSettings: planner,
       log: log,
+      savedPlans: savedPlans,
       reminder: reminder,
       initialReminderPage: launchPage,
     ),
@@ -38,6 +41,7 @@ class QuranMemorizationApp extends StatefulWidget {
     this.unit,
     this.plannerSettings = const PlannerSettings(),
     this.log = const MemorizationLog(),
+    this.savedPlans,
     this.reminder,
     this.initialReminderPage,
   });
@@ -51,6 +55,9 @@ class QuranMemorizationApp extends StatefulWidget {
 
   /// Restored completion history (mark-today-done + streak).
   final MemorizationLog log;
+
+  /// Saved named plans for multiple estimations.
+  final SavedPlans? savedPlans;
 
   /// Daily reminder service; when null no reminder UI is offered.
   final ReminderService? reminder;
@@ -169,6 +176,7 @@ class _QuranMemorizationAppState extends State<QuranMemorizationApp> {
         unit: widget.unit,
         settings: widget.plannerSettings,
         log: widget.log,
+        savedPlans: widget.savedPlans,
         themeMode: _themeMode,
         onThemeModeChanged: _setThemeMode,
         reminder: widget.reminder,
@@ -185,6 +193,7 @@ class PlannerScreen extends StatefulWidget {
     this.unit,
     this.settings = const PlannerSettings(),
     this.log = const MemorizationLog(),
+    this.savedPlans,
     this.themeMode = ThemeMode.system,
     this.onThemeModeChanged,
     this.reminder,
@@ -199,6 +208,9 @@ class PlannerScreen extends StatefulWidget {
 
   /// Restored completion history shown in the "today's portion" card.
   final MemorizationLog log;
+
+  /// Saved named plans for multiple estimations.
+  final SavedPlans? savedPlans;
 
   /// Current app theme; the toggle in the app bar switches it.
   final ThemeMode themeMode;
@@ -222,22 +234,45 @@ class _PlannerScreenState extends State<PlannerScreen> {
   late final Set<int> _restWeekdays;
   DateTime? _startDate;
   late MemorizationLog _log;
+  late SavedPlans _savedPlans;
 
   @override
   void initState() {
     super.initState();
-    _pageController = TextEditingController(text: '${widget.settings.page}')
-      ..addListener(_onChanged);
-    _rateController = TextEditingController(
-      text: _trimInput(widget.settings.rate),
+    final active = widget.savedPlans?.active;
+    _pageController = TextEditingController(
+      text: '${active?.page ?? widget.settings.page}',
     )..addListener(_onChanged);
-    _rateMode = widget.settings.rateIsLines
+    _rateController = TextEditingController(
+      text: _trimInput(active?.rate ?? widget.settings.rate),
+    )..addListener(_onChanged);
+    _rateMode = (active?.rateIsLines ?? widget.settings.rateIsLines)
         ? RateMode.lines
         : RateMode.fraction;
-    _direction = widget.settings.direction;
-    _restWeekdays = {...widget.settings.restWeekdays};
-    _startDate = widget.settings.startDate;
+    _direction = active?.direction ?? widget.settings.direction;
+    _restWeekdays = {...(active?.restWeekdays ?? widget.settings.restWeekdays)};
+    _startDate = active?.startDate ?? widget.settings.startDate;
     _log = widget.log;
+    _savedPlans = widget.savedPlans ?? SavedPlans(plans: [], activeIndex: 0);
+
+    // Auto-migrate legacy PlannerSettings: if there are no saved plans but
+    // the legacy settings differ from the defaults, create an "Hifz" plan
+    // from them so the user’s existing progress is preserved.
+    if (_savedPlans.isEmpty && _hasLegacySettings()) {
+      final s = widget.settings;
+      final from = SavedPlan(
+        name: 'Hifz',
+        page: s.page,
+        rate: s.rate,
+        rateIsLines: s.rateIsLines,
+        direction: s.direction,
+        restWeekdays: s.restWeekdays,
+        startDate: s.startDate,
+      );
+      _savedPlans = _savedPlans.addPlan('Hifz', from: from);
+      _savedPlans.save();
+    }
+
     widget.unit?.addListener(_onUnitChanged);
   }
 
@@ -261,10 +296,27 @@ class _PlannerScreenState extends State<PlannerScreen> {
   /// Persists the current planner inputs (fire-and-forget) so a page
   /// refresh restores them.
   void _saveSettings() {
+    final page = _page ?? 1;
+    final rate = _rate ?? 10;
+
+    // Update the active saved plan if one exists.
+    if (_savedPlans.active != null) {
+      _savedPlans = _savedPlans.updateActive(
+        page: page,
+        rate: rate,
+        rateIsLines: _rateMode == RateMode.lines,
+        direction: _direction,
+        restWeekdays: _restWeekdays,
+        startDate: _startDate,
+      );
+      _savedPlans.save();
+    }
+
+    // Also save to the legacy PlannerSettings for backward compatibility.
     widget.settings
         .copyWith(
-          page: _page ?? widget.settings.page,
-          rate: _rate ?? widget.settings.rate,
+          page: page,
+          rate: rate,
           rateIsLines: _rateMode == RateMode.lines,
           direction: _direction,
           restWeekdays: _restWeekdays,
@@ -344,6 +396,19 @@ class _PlannerScreenState extends State<PlannerScreen> {
     );
   }
 
+  /// Whether the legacy PlannerSettings has non-default values worth
+  /// migrating. The defaults are page=1, rate=10, rateIsLines=true,
+  /// direction=forward, no rest days, no start date.
+  bool _hasLegacySettings() {
+    final s = widget.settings;
+    return s.page != 1 ||
+        s.rate != 10 ||
+        !s.rateIsLines ||
+        s.direction != MemorizationDirection.forward ||
+        s.restWeekdays.isNotEmpty ||
+        s.startDate != null;
+  }
+
   /// The planner's daily rate converted to text lines per day.
   double _effectiveLinesPerDay() {
     final pagesPerDay = _rateMode == RateMode.lines
@@ -407,6 +472,142 @@ class _PlannerScreenState extends State<PlannerScreen> {
   static String _trim(double value) {
     if (value == value.roundToDouble()) return value.toInt().toString();
     return value.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '');
+  }
+
+  // -- Plan management --
+
+  void _switchPlan(int index) {
+    if (index == _savedPlans.activeIndex) return;
+    setState(() {
+      _savedPlans = _savedPlans.select(index);
+      _loadPlanIntoFields(_savedPlans.active);
+    });
+    _savedPlans.save();
+  }
+
+  void _loadPlanIntoFields(SavedPlan? plan) {
+    if (plan == null) return;
+    _pageController.text = '${plan.page}';
+    _pageController.selection = TextSelection.collapsed(
+      offset: _pageController.text.length,
+    );
+    _rateController.text = _trimInput(plan.rate);
+    _rateController.selection = TextSelection.collapsed(
+      offset: _rateController.text.length,
+    );
+    _rateMode = plan.rateIsLines ? RateMode.lines : RateMode.fraction;
+    _direction = plan.direction;
+    _restWeekdays
+      ..clear()
+      ..addAll(plan.restWeekdays);
+    _startDate = plan.startDate;
+  }
+
+  Future<void> _createNewPlan() async {
+    final name = await _showPlanNameDialog(
+      title: 'New Plan',
+      hint: 'e.g. Hifz, Mujawwad, Murajah',
+    );
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    // Inherit the current UI state so the new plan starts where the user
+    // already is, instead of resetting to defaults.
+    final from = SavedPlan(
+      name: name.trim(),
+      page: _page ?? 1,
+      rate: _rate ?? 10,
+      rateIsLines: _rateMode == RateMode.lines,
+      direction: _direction,
+      restWeekdays: _restWeekdays,
+      startDate: _startDate,
+    );
+    setState(() {
+      _savedPlans = _savedPlans.addPlan(name.trim(), from: from);
+    });
+    _savedPlans.save();
+  }
+
+  Future<void> _renameCurrentPlan() async {
+    final current = _savedPlans.active;
+    if (current == null) return;
+    final name = await _showPlanNameDialog(
+      title: 'Rename Plan',
+      initialValue: current.name,
+    );
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    setState(() {
+      _savedPlans = _savedPlans.renamePlan(
+        _savedPlans.activeIndex,
+        name.trim(),
+      );
+    });
+    _savedPlans.save();
+  }
+
+  void _deleteCurrentPlan() {
+    final current = _savedPlans.active;
+    if (current == null || _savedPlans.plans.length <= 1) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Plan'),
+        content: Text('Delete "${current.name}"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _savedPlans = _savedPlans.removePlan(_savedPlans.activeIndex);
+                _loadPlanIntoFields(_savedPlans.active);
+              });
+              _savedPlans.save();
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showPlanNameDialog({
+    required String title,
+    String? hint,
+    String? initialValue,
+  }) {
+    final controller = TextEditingController(text: initialValue);
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Plan name',
+            hintText: hint,
+          ),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) Navigator.of(context).pop(value.trim());
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.of(context).pop(name);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -481,6 +682,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                // Plan selector
+                _planSelectorCard(scheme),
+                const SizedBox(height: 12),
                 _sectionCard(
                   title: 'Current page',
                   child: Column(
@@ -545,7 +749,9 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Standard Madani mushaf: 604 pages · 15 lines per page',
+                        _page != null
+                            ? 'Juz ${MemorizationPlan.juzForPage(_page!)} · Standard Madani mushaf: 604 pages · 15 lines per page'
+                            : 'Standard Madani mushaf: 604 pages · 15 lines per page',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -712,9 +918,139 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 const SizedBox(height: 16),
                 _resultsCard(plan, scheme),
                 const SizedBox(height: 16),
+                _estimationHintsCard(scheme),
+                const SizedBox(height: 16),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Card that shows all saved plans with a selector and management actions.
+  Widget _planSelectorCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final plans = _savedPlans.plans;
+    final activeIndex = _savedPlans.activeIndex;
+    // If no plans yet, show a prompt to create one.
+    if (plans.isEmpty) {
+      return Card(
+        elevation: 0,
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(Icons.folder_open_outlined, color: scheme.primary, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                'No saved plans yet',
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Create a plan to save and switch between\nhifz, mujawwad, murajah, etc.',
+                textAlign: TextAlign.center,
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: _createNewPlan,
+                icon: const Icon(Icons.add),
+                label: const Text('Create your first plan'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bookmark_outlined, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Saved Plans',
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline, size: 20),
+                  tooltip: 'New plan',
+                  onPressed: _createNewPlan,
+                ),
+                if (plans.length > 1)
+                  PopupMenuButton<int>(
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    tooltip: 'Plan options',
+                    onSelected: (value) {
+                      if (value == 0) {
+                        _renameCurrentPlan();
+                      } else if (value == 1) {
+                        _deleteCurrentPlan();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 0,
+                        child: ListTile(
+                          leading: Icon(Icons.edit_outlined),
+                          title: Text('Rename'),
+                          dense: true,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 1,
+                        enabled: plans.length > 1,
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.delete_outline,
+                            color: scheme.error,
+                          ),
+                          title: Text(
+                            'Delete',
+                            style: TextStyle(color: scheme.error),
+                          ),
+                          dense: true,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Plan chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < plans.length; i++)
+                  ChoiceChip(
+                    label: Text(plans[i].name),
+                    selected: i == activeIndex,
+                    onSelected: (_) => _switchPlan(i),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -860,7 +1196,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
       title = 'Mark today’s portion done';
       subtitle = 'Complete the plan above to enable this.';
     } else if (doneToday) {
-      title = 'Done today — barakallahu feek!'; // ‎may Allah bless you
+      title = 'Done today — barakallahu feek!'; // ‏ may Allah bless you
       subtitle = 'Page ${portion.$1} · ${_trim(portion.$2)} lines memorized.';
     } else {
       title = 'Today’s portion: page ${portion.$1}';
@@ -918,7 +1254,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
                         : FilledButton.icon(
                             key: const ValueKey('mark-done'),
                             icon: const Icon(Icons.check),
-                            label: const Text('Mark today’s portion done'),
+                            label: const Text("Mark today’s portion done"),
                             onPressed: () => _markTodayDone(plan),
                           ),
                   ),
@@ -1100,7 +1436,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
             const SizedBox(height: 4),
             Text(
               isDone
-                  ? 'Alhamdulillah — the remaining ${_trim(remaining)} page${remaining == 1 ? '' : 's'} fit in one session.'
+                  ? 'Alhamdulillah — the remaining ${_trim(remaining)} page${_trim(remaining) == '1' ? '' : 's'} fit in one session.'
                   : '${plan.restWeekdays.isEmpty ? 'every day' : 'on your study days'} · '
                         'starting ${_startDate == null ? 'today' : formatDate(_startDate!)}',
               style: textTheme.bodyMedium?.copyWith(
@@ -1163,6 +1499,180 @@ class _PlannerScreenState extends State<PlannerScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Common memorization paces with estimated finish times, so the user
+  /// can quickly see "if I memorize at this rate, when will I finish?".
+  Widget _estimationHintsCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final page = _page;
+    if (page == null) return const SizedBox.shrink();
+
+    // (label, pagesPerDay) — common memorization paces.
+    final hints = [
+      ('1 page / day', 1.0),
+      ('Half page / salah', 2.5),
+      ('2 pages / day', 2.0),
+      ('1 juz / week', 2.86),
+      ('1 page / salah', 5.0),
+      ('1 juz / 3 days', 6.67),
+      ('1 surah / day', 5.3),
+      ('2 pages / salah', 10.0),
+      ('1 page before & after salah', 10.0),
+      ('3 pages / salah', 15.0),
+      ('2 pages before & after salah', 20.0),
+      ('5 pages / salah', 25.0),
+      ('3 pages before & after salah', 30.0),
+      ('1 juz / day', 20.13),
+      ('10 pages / salah', 50.0),
+    ];
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.speed_outlined, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Quick estimates',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Tap a pace to apply it to your plan',
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (final (label, pace) in hints) ...[
+              _hintRow(label, pace, page, scheme),
+              if (label != hints.last.$1) const SizedBox(height: 8),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A single row in the estimation hints card: pace label on the left,
+  /// "finish in X days" with the actual date on the right.
+  /// Whether the given pace matches the current planner rate (pages/day).
+  bool _isCurrentPace(double pagesPerDay) {
+    final rate = _rate;
+    if (rate == null) return false;
+    final currentPagesPerDay = _rateMode == RateMode.lines
+        ? rate / MemorizationPlan.linesPerPage
+        : rate;
+    // Allow a small tolerance for floating-point comparison.
+    return (currentPagesPerDay - pagesPerDay).abs() < 0.05;
+  }
+
+  /// Applies the selected pace to the planner: sets rate mode to fraction
+  /// (pages/day) and the rate to the given value.
+  void _applyPace(double pagesPerDay) {
+    setState(() {
+      _rateMode = RateMode.fraction;
+      _rateController.text = _trimInput(pagesPerDay);
+      _rateController.selection = TextSelection.collapsed(
+        offset: _rateController.text.length,
+      );
+    });
+    _saveSettings();
+  }
+
+  Widget _hintRow(
+    String label,
+    double pagesPerDay,
+    int currentPage,
+    ColorScheme scheme,
+  ) {
+    final textTheme = Theme.of(context).textTheme;
+    final plan = MemorizationPlan(
+      currentPage: currentPage,
+      pagesPerDay: pagesPerDay,
+      restWeekdays: _restWeekdays,
+      startDate: _startDate,
+      direction: _direction,
+    );
+    final result = plan.compute();
+    final days = result.calendarDays;
+    final isDone = days <= 0;
+    final selected = _isCurrentPace(pagesPerDay);
+
+    return InkWell(
+      onTap: () => _applyPace(pagesPerDay),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? scheme.primaryContainer.withValues(alpha: 0.4)
+              : null,
+          borderRadius: BorderRadius.circular(12),
+          border: selected
+              ? Border.all(color: scheme.primary.withValues(alpha: 0.5))
+              : null,
+        ),
+        child: Row(
+          children: [
+            if (selected)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Icon(
+                  Icons.check_circle,
+                  size: 16,
+                  color: scheme.primary,
+                ),
+              ),
+            Expanded(
+              child: Text(
+                label,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? scheme.primary : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              isDone
+                  ? 'done'
+                  : 'finish in ${days == 1 ? '1 day' : '$days days'}',
+              style: textTheme.bodyMedium?.copyWith(
+                color: isDone ? scheme.primary : scheme.onSurfaceVariant,
+                fontWeight: isDone ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: scheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                isDone ? '' : formatDate(result.finishDate),
+                style: textTheme.labelSmall?.copyWith(
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

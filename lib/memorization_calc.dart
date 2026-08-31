@@ -119,6 +119,24 @@ class MemorizationPlan {
     return DateTime(now.year, now.month, now.day);
   }
 
+  /// Approximate Juz number (1..30) for a given page in the Madani mushaf.
+  ///
+  /// Uses the well-known juz start-page mapping; the result is exact for
+  /// standard Madani mushafs and off-by-one at most for edge pages.
+  static int juzForPage(int page) {
+    // Juz start pages in the standard Madani mushaf (604 pages, 30 juz).
+    const starts = [
+      1, 22, 42, 62, 82, 102, 122, 142, 162, 182,
+      201, 222, 242, 262, 282, 302, 322, 342, 362, 382,
+      402, 422, 442, 462, 482, 502, 522, 542, 562, 582,
+    ];
+    var juz = 1;
+    for (var i = 0; i < starts.length; i++) {
+      if (page >= starts[i]) juz = i + 1;
+    }
+    return juz;
+  }
+
   /// Pages still to memorize, counting [currentPage] as incomplete.
   ///
   /// Forward: pages [currentPage]..604. Backward: pages [currentPage]..1.

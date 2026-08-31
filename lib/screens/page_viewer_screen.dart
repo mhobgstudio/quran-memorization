@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemChrome, SystemUiMode;
+import 'package:flutter/services.dart' show KeyEvent, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey, SystemChrome, SystemUiMode;
 
 import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
@@ -113,6 +113,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   /// by tapping the page body or the app bar's fullscreen button.
   bool _fullscreen = false;
 
+  /// Focus node for keyboard navigation in the mushaf viewer.
+  final FocusNode _focusNode = FocusNode();
+
   /// Reminder service for the alarm button; falls back to the shared
   /// uninitialized instance so scheduling fails gracefully in tests.
   late final ReminderService _reminder;
@@ -151,19 +154,16 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       });
     }
     _load();
+    // Auto-focus so keyboard shortcuts work immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
-
-  void _onUnitChanged() {
-    if (mounted) setState(() {});
-  }
-
-  /// Effective playback state: the shared unit's when bound, local otherwise.
-  bool get _isPlaying => widget.unit?.playing ?? _playing;
-
-  String? get _playError => widget.unit?.error ?? _audioError;
 
   @override
+  @override
   void dispose() {
+    _focusNode.dispose();
     if (_fullscreen) {
       // Leaving the screen while in fullscreen must not leave the app's
       // system UI hidden.
@@ -178,6 +178,15 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     }
     super.dispose();
   }
+
+  void _onUnitChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Effective playback state: the shared unit's when bound, local otherwise.
+  bool get _isPlaying => widget.unit?.playing ?? _playing;
+
+  String? get _playError => widget.unit?.error ?? _audioError;
 
   Future<void> _load() async {
     final injected = widget.mushaf;
@@ -507,7 +516,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return KeyboardListener(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
       appBar: _fullscreen
           ? null
           : AppBar(
@@ -570,7 +582,23 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
           ],
         ),
       ),
+    ),
     );
+  }
+
+  /// Keyboard handler for arrow-key navigation in the mushaf viewer.
+  /// Left/Right arrows navigate pages (matching the swipe gestures).
+  void _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return;
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _goToPage(1); // Next page (RTL: left = forward)
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _goToPage(-1); // Previous page (RTL: right = back)
+    } else if (event.logicalKey == LogicalKeyboardKey.space) {
+      _togglePlay();
+    } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_fullscreen) _toggleFullscreen();
+    }
   }
 
   Widget _buildBody(BuildContext context) {

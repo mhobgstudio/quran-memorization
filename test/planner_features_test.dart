@@ -28,6 +28,7 @@ void main() {
     );
     await tester.pump();
 
+    await scrollTo(tester, find.text('Page number'));
     expect(find.widgetWithText(TextField, '42'), findsOneWidget);
     expect(find.widgetWithText(TextField, '5'), findsOneWidget);
   });
@@ -43,11 +44,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mark-done')));
     await tester.pumpAndSettle();
 
+    await scrollTo(tester, find.text('Done today — barakallahu feek!'));
     expect(find.text('Done today — barakallahu feek!'), findsOneWidget);
     await scrollTo(tester, find.text('day streak'));
     expect(find.text('day streak'), findsOneWidget);
 
     // Undo removes the session.
+    await scrollTo(tester, find.byKey(const ValueKey('undo-today')));
     await tester.tap(find.byKey(const ValueKey('undo-today')));
     await tester.pumpAndSettle();
     await scrollTo(tester, find.text('Mark today’s portion done'));
@@ -127,9 +130,10 @@ void main() {
     await tester.pumpWidget(const QuranMemorizationApp());
     await tester.pump();
 
-    await tester.enterText(find.byType(TextField).first, '33');
+    await scrollTo(tester, find.text('Page number'));
+    await tester.enterText(find.widgetWithText(TextField, '1'), '33');
     await tester.pump();
-    await tester.enterText(find.byType(TextField).at(1), '4');
+    await tester.enterText(find.widgetWithText(TextField, '10'), '4');
     await tester.pump();
 
     final prefs = await SharedPreferences.getInstance();
