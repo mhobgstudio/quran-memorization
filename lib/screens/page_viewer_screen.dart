@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,12 +9,16 @@ import '../data/mushaf_page.dart';
 import '../data/quran_audio.dart';
 import '../data/quran_text.dart';
 import '../data/quran_translation.dart';
+import '../data/quran_tafsir.dart';
 import '../data/encouraging_verses.dart';
 import '../memorization_calc.dart' show MemorizationDirection;
 import '../services/audio_player.dart';
 import '../services/audio_unit_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../services/reminder_service.dart';
 import '../services/reminder_settings.dart';
+import 'quran_index_screen.dart';
 
 /// Displays one page of the mushaf exactly as printed: a header band with the
 /// surah name, juz and page number, the 15 justified Uthmani lines, ayah-end
@@ -109,6 +114,10 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
   QuranText? _quran;
   QuranTranslation? _translation;
 
+  /// Tafsir (commentary) view state.
+  bool _showTafsir = false;
+  TafsirData? _tafsir;
+
   /// Whether the mushaf fills the screen with the app chrome hidden. Toggled
   /// by tapping the page body or the app bar's fullscreen button.
   bool _fullscreen = false;
@@ -122,6 +131,11 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
 
   /// The persisted reminder config (null until the first load completes).
   ReminderSettings? _reminderSettings;
+
+  /// Bookmarks: list of {page, note, timestamp} maps.
+  List<Map<String, dynamic>> _bookmarks = [];
+  static const String _bookmarksPrefKey = 'quran_bookmarks_v2';
+  static const String _lastPagePrefKey = 'quran_last_page';
 
   @override
   void initState() {
@@ -154,6 +168,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       });
     }
     _load();
+    _loadBookmarks();
     // Auto-focus so keyboard shortcuts work immediately.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
@@ -410,6 +425,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       _ayahIndex = 0;
       _started = false;
     });
+    _saveLastPage(_page);
   }
 
   /// Opens the page-jump dialog: type a page number (1..604) and press Go,
@@ -420,6 +436,107 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       builder: (_) => _PageJumpDialog(initial: '$_page'),
     );
     if (target != null && mounted) _jumpToPage(target);
+  }
+
+  /// Opens the Quran navigation index (surah / juz / bookmarks).
+  Future<void> _openNavigationIndex() async {
+    final target = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => QuranIndexScreen(initialPage: _page),
+    );
+    if (target != null && mounted) _jumpToPage(target);
+  }
+
+  // ── Persistence ────────────────────────────────────────────────────
+
+  Future<void> _loadBookmarks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_bookmarksPrefKey);
+      if (raw != null) {
+        final list = jsonDecode(raw) as List;
+        if (!mounted) return;
+        setState(() {
+          _bookmarks = list.cast<Map<String, dynamic>>();
+        });
+      }
+    } catch (_) {
+      // Ignore corrupt data.
+    }
+  }
+
+  Future<void> _saveBookmarks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_bookmarksPrefKey, jsonEncode(_bookmarks));
+    } catch (_) {
+      // Ignore write failures silently.
+    }
+  }
+
+  Future<void> _saveLastPage(int page) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_lastPagePrefKey, page);
+    } catch (_) {
+      // Ignore.
+    }
+  }
+
+  bool _isBookmarked(int page) => _bookmarks.any((b) => b['page'] == page);
+
+  void _toggleBookmark(int page) {
+    setState(() {
+      final idx = _bookmarks.indexWhere((b) => b['page'] == page);
+      if (idx >= 0) {
+        _bookmarks.removeAt(idx);
+      } else {
+        _bookmarks.insert(0, {
+          'page': page,
+          'note': null,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+    });
+    _saveBookmarks();
+  }
+
+  Future<void> _showBookmarkDialog(int page) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Bookmark page $page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Add a note (optional)'),
+          maxLines: 2,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      setState(() {
+        _bookmarks.insert(0, {
+          'page': page,
+          'note': result.isEmpty ? null : result,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        });
+      });
+      _saveBookmarks();
+    }
   }
 
   Future<void> _loadReminderSettings() async {
@@ -523,9 +640,52 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       appBar: _fullscreen
           ? null
           : AppBar(
-              title: Text('Page $_page'),
+              title: _mushaf != null && !_loading
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _mushaf!.surahMeta(_currentPage.surah).transliteration,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          ' · Juz ${_currentPage.juz}',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text('Page $_page'),
               centerTitle: false,
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.menu_book),
+                  tooltip: 'Quran index (surah, juz, bookmarks)',
+                  onPressed: _openNavigationIndex,
+                ),
+                IconButton(
+                  icon: Icon(
+                    _isBookmarked(_page)
+                        ? Icons.bookmark
+                        : Icons.bookmark_border,
+                  ),
+                  tooltip: _isBookmarked(_page)
+                      ? 'Remove bookmark'
+                      : 'Bookmark this page',
+                  color: _isBookmarked(_page)
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                  onPressed: () {
+                    if (_isBookmarked(_page)) {
+                      _toggleBookmark(_page);
+                    } else {
+                      _showBookmarkDialog(_page);
+                    }
+                  },
+                ),
                 IconButton(
                   icon: Icon(
                     _reminderActive
@@ -543,16 +703,68 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                   tooltip: 'Fullscreen',
                   onPressed: _toggleFullscreen,
                 ),
-                IconButton(
+                PopupMenuButton<String>(
                   icon: Icon(
-                    _showTranslation
+                    _showTranslation || _showTafsir
                         ? Icons.menu_book_outlined
                         : Icons.translate,
                   ),
-                  tooltip: _showTranslation
-                      ? 'Back to the mushaf page'
-                      : 'Show meanings',
-                  onPressed: _toggleTranslation,
+                  tooltip: 'Text views',
+                  onSelected: (value) {
+                    if (value == 'translation') {
+                      _toggleTranslation();
+                    } else if (value == 'tafsir') {
+                      _toggleTafsir();
+                    } else if (value == 'both') {
+                      _toggleTranslationAndTafsir();
+                    } else if (value == 'mushaf') {
+                      setState(() {
+                        _showTranslation = false;
+                        _showTafsir = false;
+                      });
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'mushaf',
+                      child: ListTile(
+                        leading: const Icon(Icons.auto_stories),
+                        title: const Text('Mushaf view'),
+                        dense: true,
+                        selected: !_showTranslation && !_showTafsir,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'translation',
+                      child: ListTile(
+                        leading: const Icon(Icons.translate),
+                        title: const Text('Translation'),
+                        subtitle: const Text('Arabic + English meaning'),
+                        dense: true,
+                        selected: _showTranslation && !_showTafsir,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'tafsir',
+                      child: ListTile(
+                        leading: const Icon(Icons.book),
+                        title: const Text('Tafsir'),
+                        subtitle: const Text('Arabic + Ibn Kathir commentary'),
+                        dense: true,
+                        selected: _showTafsir && !_showTranslation,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'both',
+                      child: ListTile(
+                        leading: const Icon(Icons.compare_arrows),
+                        title: const Text('Translation + Tafsir'),
+                        subtitle: const Text('Both side by side'),
+                        dense: true,
+                        selected: _showTranslation && _showTafsir,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -637,8 +849,8 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
                   _goToPage(1);
                 }
               },
-              child: _showTranslation
-                  ? _translationView(context, page, highlighted)
+              child: _showTranslation || _showTafsir
+                  ? _combinedTextView(context, page, highlighted)
                   : // The printed Madani full-view page is 699×1020
                     // (h/w ≈ 1.4592). Lock the card to that ratio and center
                     // it so it never warps to the screen — it scales, keeping
@@ -713,11 +925,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       final results = await Future.wait([
         QuranText.load(),
         QuranTranslation.load(),
+        TafsirData.load(),
       ]);
       if (!mounted) return;
       setState(() {
         _quran = results[0] as QuranText;
         _translation = results[1] as QuranTranslation;
+        _tafsir = results[2] as TafsirData;
         _translationLoading = false;
         _showTranslation = true;
       });
@@ -730,9 +944,94 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     }
   }
 
-  /// The meanings view: every ayah on the page, Arabic with the English
-  /// translation underneath, today's ayahs highlighted.
-  Widget _translationView(
+  /// Toggles tafsir-only view.
+  Future<void> _toggleTafsir() async {
+    if (_showTafsir) {
+      setState(() {
+        _showTafsir = false;
+        _showTranslation = false;
+      });
+      return;
+    }
+    if (_quran != null && _tafsir != null) {
+      setState(() {
+        _showTafsir = true;
+        _showTranslation = false;
+      });
+      return;
+    }
+    setState(() {
+      _translationLoading = true;
+      _translationError = null;
+    });
+    try {
+      final results = await Future.wait([
+        QuranText.load(),
+        TafsirData.load(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _quran = results[0] as QuranText;
+        _tafsir = results[1] as TafsirData;
+        _translationLoading = false;
+        _showTafsir = true;
+        _showTranslation = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _translationLoading = false;
+        _translationError = 'Could not load tafsir: $e';
+      });
+    }
+  }
+
+  /// Toggles both translation and tafsir view.
+  Future<void> _toggleTranslationAndTafsir() async {
+    if (_showTranslation && _showTafsir) {
+      setState(() {
+        _showTranslation = false;
+        _showTafsir = false;
+      });
+      return;
+    }
+    if (_quran != null && _translation != null && _tafsir != null) {
+      setState(() {
+        _showTranslation = true;
+        _showTafsir = true;
+      });
+      return;
+    }
+    setState(() {
+      _translationLoading = true;
+      _translationError = null;
+    });
+    try {
+      final results = await Future.wait([
+        QuranText.load(),
+        QuranTranslation.load(),
+        TafsirData.load(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _quran = results[0] as QuranText;
+        _translation = results[1] as QuranTranslation;
+        _tafsir = results[2] as TafsirData;
+        _translationLoading = false;
+        _showTranslation = true;
+        _showTafsir = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _translationLoading = false;
+        _translationError = 'Could not load data: $e';
+      });
+    }
+  }
+
+  /// Combined view: shows translation and/or tafsir depending on toggle state.
+  Widget _combinedTextView(
     BuildContext context,
     MushafPage page,
     Set<int> highlighted,
@@ -751,7 +1050,13 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               Text(error, textAlign: TextAlign.center),
               const SizedBox(height: 12),
               FilledButton.tonal(
-                onPressed: _toggleTranslation,
+                onPressed: () {
+                  setState(() {
+                    _translationError = null;
+                  });
+                  if (_showTafsir) _toggleTafsir();
+                  if (_showTranslation) _toggleTranslation();
+                },
                 child: const Text('Retry'),
               ),
             ],
@@ -760,14 +1065,9 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       );
     }
     final quran = _quran;
-    final translation = _translation;
-    if (quran == null || translation == null) {
-      return const SizedBox.shrink();
-    }
+    if (quran == null) return const SizedBox.shrink();
 
-    // (line index, surah, ayah) in reading order. Line verse ranges overlap
-    // at ayah boundaries (a line ending mid-ayah and the next continuing it
-    // both list that ayah), so collapse consecutive duplicates.
+    // Collect ayahs on this page.
     final ayahs = <({int line, int surah, int ayah})>[];
     for (var i = 0; i < page.lines.length; i++) {
       for (final ref in page.lines[i].ayahRefs) {
@@ -783,19 +1083,44 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
+
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: ayahs.length,
       itemBuilder: (context, index) {
         final entry = ayahs[index];
         final isToday = highlighted.contains(entry.line);
-        return _translationAyahCard(
+        final arabic = quran.ayahAtRef(entry.surah, entry.ayah).text;
+
+        // Translation text
+        String? english;
+        if (_showTranslation && _translation != null) {
+          english = _translation!.translationAt(
+            quran.globalIndex(entry.surah, entry.ayah),
+          );
+        }
+
+        // Tafsir text
+        String? tafsirText;
+        String? tafsirTitle;
+        String? tafsirSource;
+        if (_showTafsir && _tafsir != null) {
+          final tafsirEntry = _tafsir!.tafsirAt(entry.surah, entry.ayah);
+          if (tafsirEntry != null) {
+            tafsirText = tafsirEntry.commentary;
+            tafsirTitle = tafsirEntry.title;
+            tafsirSource = tafsirEntry.source;
+          }
+        }
+
+        return _combinedAyahCard(
           surah: entry.surah,
           ayah: entry.ayah,
-          arabic: quran.ayahAtRef(entry.surah, entry.ayah).text,
-          english: translation.translationAt(
-            quran.globalIndex(entry.surah, entry.ayah),
-          ),
+          arabic: arabic,
+          english: english,
+          tafsirText: tafsirText,
+          tafsirTitle: tafsirTitle,
+          tafsirSource: tafsirSource,
           isToday: isToday,
           dark: dark,
           scheme: scheme,
@@ -805,21 +1130,24 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
     );
   }
 
-  /// One ayah in the meanings view: reference badge, the Uthmani Arabic,
-  /// and the English meaning beneath. Today's ayahs get the highlight tint.
-  Widget _translationAyahCard({
+  /// Single ayah card that can show translation, tafsir, or both.
+  Widget _combinedAyahCard({
     required int surah,
     required int ayah,
     required String arabic,
-    required String english,
+    String? english,
+    String? tafsirText,
+    String? tafsirTitle,
+    String? tafsirSource,
     required bool isToday,
     required bool dark,
     required ColorScheme scheme,
     required TextTheme textTheme,
   }) {
     final base = dark ? const Color(0xFF211E1A) : const Color(0xFFFFFDF5);
+    final hasTafsir = tafsirText != null && tafsirText.isNotEmpty;
     return Container(
-      key: ValueKey('translation-ayah-$surah-$ayah'),
+      key: ValueKey('combined-ayah-$surah-$ayah'),
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
@@ -836,6 +1164,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Reference badge
           Align(
             alignment: Alignment.centerLeft,
             child: Container(
@@ -856,6 +1185,7 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // Arabic text
           Text(
             arabic,
             textAlign: TextAlign.right,
@@ -866,14 +1196,73 @@ class _PageViewerScreenState extends State<PageViewerScreen> {
               color: dark ? const Color(0xFFF0EDE4) : const Color(0xFF231F1A),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            english,
-            style: textTheme.bodyMedium?.copyWith(
-              color: scheme.onSurfaceVariant,
-              height: 1.45,
+          // English translation
+          if (english != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              english,
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.45,
+              ),
             ),
-          ),
+          ],
+          // Tafsir commentary
+          if (hasTafsir) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: scheme.tertiaryContainer.withValues(alpha: dark ? 0.3 : 0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Builder(
+                builder: (context) {
+                  final comment = tafsirText;
+                  final src = tafsirSource;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.auto_stories,
+                            size: 14,
+                            color: scheme.tertiary,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              tafsirTitle ?? 'Tafsir',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: scheme.tertiary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (src != null)
+                            Text(
+                              src,
+                              style: textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        comment,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onTertiaryContainer,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );

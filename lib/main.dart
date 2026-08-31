@@ -3,7 +3,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'memorization_calc.dart';
 import 'data/encouraging_verses.dart';
@@ -422,6 +425,39 @@ class _PlannerScreenState extends State<PlannerScreen> {
     return pagesPerDay * MemorizationPlan.linesPerPage;
   }
 
+  /// Opens the mushaf viewer at the last saved page (from auto-save).
+  Future<void> _openContinueReading() async {
+    int lastPage;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      lastPage = prefs.getInt('quran_last_page') ?? 0;
+    } catch (_) {
+      lastPage = 0;
+    }
+    if (lastPage < 1 || lastPage > 604) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No saved reading position yet.')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    final pagesPerDay = _rateMode == RateMode.lines
+        ? (_rate ?? 10) / MemorizationPlan.linesPerPage
+        : (_rate ?? (2 / 3));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PageViewerScreen(
+          page: lastPage,
+          linesPerDay: pagesPerDay * MemorizationPlan.linesPerPage,
+          direction: _direction,
+          unit: widget.unit,
+          reminder: widget.reminder,
+        ),
+      ),
+    );
+  }
+
   void _openPageViewer() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -814,6 +850,8 @@ class _PlannerScreenState extends State<PlannerScreen> {
               children: [
                 // Plan selector
                 _planSelectorCard(scheme),
+                const SizedBox(height: 12),
+                _continueReadingCard(scheme),
                 const SizedBox(height: 12),
                 if (_savedPlans.plans.length >= 2) ...[
                   _compareButton(scheme),
@@ -1694,6 +1732,65 @@ class _PlannerScreenState extends State<PlannerScreen> {
     );
   }
 
+  // ── Continue Reading ─────────────────────────────────────────────
+
+  /// Card that shows the last saved reading position and opens the viewer.
+  Widget _continueReadingCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    return Card(
+      elevation: 0,
+      color: scheme.primaryContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: scheme.primary.withValues(alpha: 0.25),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _openContinueReading,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(
+                Icons.play_circle_fill_rounded,
+                color: scheme.primary,
+                size: 28,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Continue reading',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Pick up where you left off in the mushaf',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onPrimaryContainer.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: scheme.primary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── Plan comparison ──────────────────────────────────────────────
 
   /// Button that opens the comparison bottom sheet.
@@ -2553,10 +2650,31 @@ class _ComparisonSheetState extends State<_ComparisonSheet> {
           centerTitle: false,
           actions: [
             if (!_sharing)
-              IconButton(
+              PopupMenuButton<String>(
                 icon: const Icon(Icons.share),
-                tooltip: 'Share as image',
-                onPressed: _shareAsImage,
+                tooltip: 'Share comparison',
+                onSelected: (value) {
+                  if (value == 'image') _shareAsImage();
+                  if (value == 'pdf') _shareAsPdf();
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'image',
+                    child: ListTile(
+                      leading: Icon(Icons.image_outlined),
+                      title: Text('Share as Image'),
+                      dense: true,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'pdf',
+                    child: ListTile(
+                      leading: Icon(Icons.picture_as_pdf),
+                      title: Text('Share as PDF'),
+                      dense: true,
+                    ),
+                  ),
+                ],
               ),
             if (_sharing)
               const Padding(
@@ -2777,7 +2895,12 @@ class _ComparisonSheetState extends State<_ComparisonSheet> {
         return;
       }
 
-      final buffer = byteData.buffer.asUint8List();
+      // Draw a watermark on the captured image.
+      final buffer = await _addWatermark(
+        byteData.buffer.asUint8List(),
+        image.width,
+        image.height,
+      );
 
       // Share using share_plus v10 API.
       final xFile = XFile.fromData(
@@ -2799,6 +2922,414 @@ class _ComparisonSheetState extends State<_ComparisonSheet> {
       }
     } finally {
       if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  /// Adds a semi-transparent watermark to the bottom-right of the image.
+  Future<Uint8List> _addWatermark(Uint8List pngBytes, int width, int height) async {
+    // Decode the PNG into a ui.Image.
+    final codec = await ui.instantiateImageCodec(pngBytes);
+    final frame = await codec.getNextFrame();
+    final originalImage = frame.image;
+
+    // Create a new picture to draw on.
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    // Draw the original image.
+    canvas.drawImage(originalImage, Offset.zero, Paint());
+
+    // Draw the watermark.
+    final watermarkText = 'Hifz Planner';
+    final textStyle = TextStyle(
+      color: const Color(0x66FFFFFF), // 40% white opacity
+      fontSize: width * 0.025,
+      fontWeight: FontWeight.w600,
+    );
+    final textPainter = TextPainter(
+      text: TextSpan(text: watermarkText, style: textStyle),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+
+    // Position in the bottom-right corner with padding.
+    final padding = width * 0.03;
+    final textX = width - textPainter.width - padding;
+    final textY = height - textPainter.height - padding;
+
+    // Draw a semi-transparent background pill behind the text.
+    final bgPaint = Paint()
+      ..color = const Color(0x44000000) // 25% black opacity
+      ..style = PaintingStyle.fill;
+    final bgRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        textX - 8,
+        textY - 4,
+        textPainter.width + 16,
+        textPainter.height + 8,
+      ),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(bgRect, bgPaint);
+
+    // Draw the watermark text.
+    textPainter.paint(canvas, Offset(textX, textY));
+
+    // Convert back to an image and then to PNG bytes.
+    final outputImage = await recorder.endRecording().toImage(width, height);
+    final outputByteData = await outputImage.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    originalImage.dispose();
+    outputImage.dispose();
+
+    return outputByteData!.buffer.asUint8List();
+  }
+
+  /// Generates a PDF of the comparison and shares it.
+  Future<void> _shareAsPdf() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+
+    try {
+      final planAData = widget.plans[_planA];
+      final planBData = widget.plans[_planB];
+      final planA = _buildPlan(planAData);
+      final planB = _buildPlan(planBData);
+      final resultA = planA?.compute();
+      final resultB = planB?.compute();
+
+      // Load the logo image from assets.
+      final logoBytes = await rootBundle.load('assets/logo.png');
+      final logoImage = pw.MemoryImage(
+        logoBytes.buffer.asUint8List(),
+      );
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(32),
+          footer: (context) => pw.Container(
+            alignment: pw.Alignment.centerRight,
+            margin: const pw.EdgeInsets.only(top: 12),
+            padding: const pw.EdgeInsets.only(top: 8),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                top: pw.BorderSide(color: PdfColors.grey300, width: 0.5),
+              ),
+            ),
+            child: pw.Text(
+              'Page ${context.pageNumber} of ${context.pagesCount}',
+              style: const pw.TextStyle(
+                fontSize: 9,
+                color: PdfColors.grey500,
+              ),
+            ),
+          ),
+          build: (context) => [
+            // Branded header
+            pw.Container(
+              padding: const pw.EdgeInsets.only(bottom: 16),
+              decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                  bottom: pw.BorderSide(color: PdfColors.teal700, width: 2),
+                ),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Row(
+                    children: [
+                      // App logo
+                      pw.ClipRRect(
+                        horizontalRadius: 8,
+                        verticalRadius: 8,
+                        child: pw.Image(
+                          logoImage,
+                          width: 36,
+                          height: 36,
+                          fit: pw.BoxFit.cover,
+                        ),
+                      ),
+                      pw.SizedBox(width: 12),
+                      pw.Expanded(
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Text(
+                              'Hifz Planner',
+                              style: pw.TextStyle(
+                                fontSize: 18,
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.teal700,
+                              ),
+                            ),
+                            pw.Text(
+                              'Quran Memorization Plan Comparison',
+                              style: const pw.TextStyle(
+                                fontSize: 10,
+                                color: PdfColors.grey600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Date badge
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: pw.BoxDecoration(
+                          color: PdfColors.grey100,
+                          borderRadius: pw.BorderRadius.circular(12),
+                        ),
+                        child: pw.Text(
+                          formatDate(DateTime.now()),
+                          style: const pw.TextStyle(
+                            fontSize: 8,
+                            color: PdfColors.grey600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 12),
+                  // Plan names
+                  pw.Row(
+                    children: [
+                      pw.Expanded(
+                        child: pw.Container(
+                          padding: const pw.EdgeInsets.all(8),
+                          decoration: pw.BoxDecoration(
+                            color: PdfColors.teal50,
+                            borderRadius: pw.BorderRadius.circular(6),
+                          ),
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.center,
+                            children: [
+                              pw.Text(
+                                'Plan A',
+                                style: const pw.TextStyle(
+                                  fontSize: 8,
+                                  color: PdfColors.grey600,
+                                ),
+                              ),
+                              pw.Text(
+                                planAData.name,
+                                style: pw.TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.teal700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      pw.SizedBox(width: 12),
+                      pw.Text(
+                        'vs',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.grey500,
+                        ),
+                      ),
+                      pw.SizedBox(width: 12),
+                      pw.Expanded(
+                        child: pw.Container(
+                          padding: const pw.EdgeInsets.all(8),
+                          decoration: pw.BoxDecoration(
+                            color: PdfColors.teal50,
+                            borderRadius: pw.BorderRadius.circular(6),
+                          ),
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.center,
+                            children: [
+                              pw.Text(
+                                'Plan B',
+                                style: const pw.TextStyle(
+                                  fontSize: 8,
+                                  color: PdfColors.grey600,
+                                ),
+                              ),
+                              pw.Text(
+                                planBData.name,
+                                style: pw.TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.teal700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 16),
+
+            // Settings comparison table
+            pw.Header(
+              level: 1,
+              child: pw.Text('Settings', style: pw.TextStyle(fontSize: 16)),
+            ),
+            pw.SizedBox(height: 8),
+            _pdfComparisonTable(
+              headers: ['', planAData.name, planBData.name],
+              rows: [
+                ['Start page', '${planAData.page}', '${planBData.page}'],
+                ['Direction',
+                  planAData.direction == MemorizationDirection.forward ? 'Forward' : 'Backward',
+                  planBData.direction == MemorizationDirection.forward ? 'Forward' : 'Backward'],
+                ['Daily rate', _formatRate(planAData), _formatRate(planBData)],
+                ['Rest days',
+                  planAData.restWeekdays.isEmpty ? 'None' : '${planAData.restWeekdays.length} days/week',
+                  planBData.restWeekdays.isEmpty ? 'None' : '${planBData.restWeekdays.length} days/week'],
+                ['Start date',
+                  planAData.startDate == null ? 'Today' : formatDate(planAData.startDate!),
+                  planBData.startDate == null ? 'Today' : formatDate(planBData.startDate!)],
+              ],
+            ),
+            pw.SizedBox(height: 16),
+
+            // Results comparison table
+            if (planA != null && planB != null && resultA != null && resultB != null) ...[
+              pw.Header(
+                level: 1,
+                child: pw.Text('Results', style: pw.TextStyle(fontSize: 16)),
+              ),
+              pw.SizedBox(height: 8),
+              _pdfComparisonTable(
+                headers: ['', planAData.name, planBData.name],
+                rows: [
+                  ['Finish date', formatDate(resultA.finishDate), formatDate(resultB.finishDate)],
+                  ['Calendar days', '${resultA.calendarDays}', '${resultB.calendarDays}'],
+                  ['Study sessions', '${resultA.studyDays}', '${resultB.studyDays}'],
+                  ['Pages remaining', _trim(planA.remainingPages), _trim(planB.remainingPages)],
+                  ['Progress',
+                    '${(planA.progressBeforeCurrentPage * 100).round()}%',
+                    '${(planB.progressBeforeCurrentPage * 100).round()}%'],
+                ],
+              ),
+              pw.SizedBox(height: 16),
+
+              // Winner
+              pw.Container(
+                padding: const pw.EdgeInsets.all(12),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.grey100,
+                  borderRadius: pw.BorderRadius.circular(8),
+                ),
+                child: pw.Row(
+                  children: [
+                    pw.Icon(pw.IconData(0xe5ca), size: 16), // emoji_events
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: pw.Text(
+                        _winnerMessage(planA, planB, planAData.name, planBData.name),
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // Footer with branding (on last page)
+            pw.SizedBox(height: 32),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  'Generated by Hifz Planner',
+                  style: const pw.TextStyle(
+                    fontSize: 8,
+                    color: PdfColors.grey500,
+                  ),
+                ),
+                pw.Text(
+                  'mhobgstudio.github.io/quran-memorization',
+                  style: const pw.TextStyle(
+                    fontSize: 8,
+                    color: PdfColors.teal600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      final bytes = await pdf.save();
+
+      final xFile = XFile.fromData(
+        bytes,
+        mimeType: 'application/pdf',
+        name: 'plan_comparison.pdf',
+      );
+
+      await Share.shareXFiles(
+        [xFile],
+        subject: 'Plan Comparison',
+        text: 'Check out my Quran memorization plan comparison!',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not generate PDF: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  /// Builds a PDF comparison table.
+  pw.Widget _pdfComparisonTable({
+    required List<String> headers,
+    required List<List<String>> rows,
+  }) {
+    return pw.TableHelper.fromTextArray(
+      headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+      cellStyle: const pw.TextStyle(fontSize: 10),
+      cellAlignment: pw.Alignment.center,
+      headerAlignment: pw.Alignment.center,
+      headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+      cellHeight: 24,
+      headerHeight: 28,
+      border: pw.TableBorder(
+        horizontalInside: const pw.BorderSide(color: PdfColors.grey300, width: 0.5),
+      ),
+      headers: headers,
+      data: rows,
+    );
+  }
+
+  /// Generates the winner message for PDF export.
+  static String _winnerMessage(
+    MemorizationPlan planA,
+    MemorizationPlan planB,
+    String nameA,
+    String nameB,
+  ) {
+    final resultA = planA.compute();
+    final resultB = planB.compute();
+    final aFinishesFirst = resultA.finishDate.isBefore(resultB.finishDate);
+    final sameFinish = resultA.finishDate == resultB.finishDate;
+
+    if (sameFinish) return 'Both plans finish on the same date.';
+    if (aFinishesFirst) {
+      final diff = resultB.finishDate.difference(resultA.finishDate).inDays;
+      return '$nameA finishes $diff day${diff == 1 ? '' : 's'} before $nameB.';
+    } else {
+      final diff = resultA.finishDate.difference(resultB.finishDate).inDays;
+      return '$nameB finishes $diff day${diff == 1 ? '' : 's'} before $nameA.';
     }
   }
 

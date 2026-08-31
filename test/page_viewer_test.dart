@@ -162,7 +162,7 @@ void main() {
     await tester.pumpWidget(harness(1, 5, FakeQuranAudio()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
     expect(find.byKey(const ValueKey('page-header')), findsOneWidget);
     expect(find.byKey(const ValueKey('line-rest-6')), findsOneWidget);
     // Inline WidgetSpan children are not traversed by find.byKey;
@@ -393,7 +393,7 @@ void main() {
     // Right-to-left mushaf order: the left chevron goes to the next page.
     await tester.tap(find.byIcon(Icons.chevron_left));
     await tester.pumpAndSettle();
-    expect(find.text('Page 2'), findsOneWidget);
+    expect(find.text('Al-Baqarah'), findsOneWidget);
     final surah = tester.widget<Text>(
       find.byKey(const ValueKey('page-header-surah')),
     );
@@ -401,7 +401,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.chevron_right));
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
   });
 
   testWidgets('swiping follows right-to-left mushaf order', (tester) async {
@@ -411,12 +411,12 @@ void main() {
     // Swipe right (finger moves right) advances to the next page.
     await tester.flingFrom(const Offset(300, 400), const Offset(400, 0), 1000);
     await tester.pumpAndSettle();
-    expect(find.text('Page 2'), findsOneWidget);
+    expect(find.text('Al-Baqarah'), findsOneWidget);
 
     // Swipe left returns to the previous page.
     await tester.flingFrom(const Offset(300, 400), const Offset(-400, 0), 1000);
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
   });
 
   testWidgets('echo mode plays one ayah at a time and auto-pauses', (
@@ -598,7 +598,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Opens on page 1 (oldest page of the window), not today's page 2.
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
     expect(
       find.textContaining('Review (last 3 days): first 10 of 14 lines'),
       findsOneWidget,
@@ -641,7 +641,7 @@ void main() {
     await tester.tap(find.text('Go'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Page 2'), findsOneWidget);
+    expect(find.text('Al-Baqarah'), findsOneWidget);
     expect(find.text('2 / 604'), findsOneWidget);
   });
 
@@ -665,7 +665,7 @@ void main() {
     await tester.enterText(find.byType(TextField), '0');
     await tester.tap(find.text('Go'));
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
   });
 
   testWidgets('swiping left/right moves to the next/previous page', (
@@ -681,7 +681,7 @@ void main() {
       1000,
     );
     await tester.pumpAndSettle();
-    expect(find.text('Page 2'), findsOneWidget);
+    expect(find.text('Al-Baqarah'), findsOneWidget);
 
     // Swipe left -> previous page.
     await tester.fling(
@@ -690,7 +690,7 @@ void main() {
       1000,
     );
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
   });
 
   testWidgets('swiping backward from page 1 stays on page 1', (tester) async {
@@ -704,7 +704,7 @@ void main() {
       1000,
     );
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
   });
 
   testWidgets('meanings toggle shows translation under each ayah', (
@@ -719,8 +719,10 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.translate), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.translate));
+    expect(find.byIcon(Icons.translate), findsOneWidget);    await tester.tap(find.byIcon(Icons.translate));
+    await tester.pumpAndSettle();
+    // Select Translation from the popup menu.
+    await tester.tap(find.text('Translation').last);
     await tester.pumpAndSettle();
 
     // The mushaf card is replaced by per-ayah meanings.
@@ -746,6 +748,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.translate));
     await tester.pumpAndSettle();
+    // Select Translation from the popup menu.
+    await tester.tap(find.text('Translation').last);
+    await tester.pumpAndSettle();
 
     BoxDecoration decorationOf(String key) =>
         tester.widget<Container>(find.byKey(ValueKey(key))).decoration!
@@ -754,12 +759,12 @@ void main() {
     // First 5 lines are today's portion (forward) -> 1:1..1:5 highlighted;
     // ayah 1:7 is beyond today's portion. (Read 1:1 before scrolling so its
     // lazily-built widget isn't disposed.)
-    final highlighted = decorationOf('translation-ayah-1-1');
+    final highlighted = decorationOf('combined-ayah-1-1');
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('translation-ayah-1-7')),
+      find.byKey(const ValueKey('combined-ayah-1-7')),
       200,
     );
-    final plain = decorationOf('translation-ayah-1-7');
+    final plain = decorationOf('combined-ayah-1-7');
     expect(highlighted.color, isNot(equals(plain.color)));
     expect(highlighted.color, isNotNull);
   });
@@ -772,12 +777,19 @@ void main() {
       quran: fixtureQuranText(),
       translation: fixtureTranslation(),
     ));
+    await tester.pumpAndSettle();    await tester.tap(find.byIcon(Icons.translate));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.translate));
+    // Select Translation from the popup menu.
+    await tester.tap(find.text('Translation').last);
     await tester.pumpAndSettle();
+
+
     expect(find.byKey(const ValueKey('mushaf-frame')), findsNothing);
 
+    // Open the text view menu and switch back to mushaf.
     await tester.tap(find.byIcon(Icons.menu_book_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mushaf view'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('mushaf-frame')), findsOneWidget);
     expect(find.byIcon(Icons.translate), findsOneWidget);
@@ -791,6 +803,8 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.translate));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Translation').last);
     await tester.runAsync(() async {
       // Let the real asset loads complete outside the fake-async zone.
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -827,7 +841,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Normal mode: app bar, audio bar and hint are visible.
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
     expect(find.byIcon(Icons.play_arrow), findsOneWidget);
     expect(
       find.textContaining("Highlighted lines are today's portion"),
@@ -838,7 +852,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mushaf-frame')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Page 1'), findsNothing); // app bar gone
+    expect(find.text('Al-Fatihah'), findsNothing); // app bar gone
     expect(find.byIcon(Icons.play_arrow), findsNothing); // audio bar gone
     expect(
       find.textContaining("Highlighted lines are today's portion"),
@@ -849,7 +863,7 @@ void main() {
     // Tap again to leave fullscreen.
     await tester.tap(find.byIcon(Icons.fullscreen_exit));
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsOneWidget);
+    expect(find.text('Al-Fatihah'), findsOneWidget);
     expect(find.byIcon(Icons.play_arrow), findsOneWidget);
   });
 
@@ -861,7 +875,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.fullscreen));
     await tester.pumpAndSettle();
-    expect(find.text('Page 1'), findsNothing);
+    expect(find.text('Al-Fatihah'), findsNothing);
     expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
 
     // Swiping still changes the page while fullscreen (right-to-left order:
@@ -869,7 +883,7 @@ void main() {
     await tester.flingFrom(const Offset(400, 300), const Offset(400, 0), 1000);
     await tester.pumpAndSettle();
     // App bar still hidden, and the page header band now shows page ٢.
-    expect(find.text('Page 2'), findsNothing);
+    expect(find.text('Al-Baqarah'), findsNothing);
     expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
     final number = tester.widget<Text>(
       find.byKey(const ValueKey('page-header-number')),

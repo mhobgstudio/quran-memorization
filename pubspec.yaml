@@ -40,6 +40,7 @@ dependencies:
   timezone: ^0.11.1
   flutter_timezone: ^5.1.0
   share_plus: ^10.0.0
+  pdf: ^3.11.3
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +68,8 @@ flutter:
     - assets/quran_data.json
     - assets/mushaf_lines.json
     - assets/quran_translation.json
+    - assets/quran_tafsir.json
+    - assets/logo.png
 
   fonts:
     - family: UthmanicHafs

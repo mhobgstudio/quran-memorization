@@ -41,6 +41,10 @@ void main() {
   testWidgets('changing the page updates the result', (tester) async {
     await tester.pumpWidget(const QuranMemorizationApp());
 
+    // Scroll to the page field (it may be below the new cards).
+    await scrollToResults(tester, find.byType(TextField));
+    await tester.pump();
+
     // Jump to page 604: only 1 page remains.
     await tester.enterText(find.byType(TextField).first, '604');
     await tester.pump();
@@ -59,12 +63,11 @@ void main() {
 
     await scrollToResults(tester, find.textContaining('Fill in a valid page'));
     expect(find.textContaining('Fill in a valid page'), findsOneWidget);
-  });
+  });  testWidgets('switching to last-page mode starts at page 604', (tester) async {
+    await tester.pumpWidget(const QuranMemorizationApp());
 
-  testWidgets(
-    'switching to last-page mode starts at page 604 and plans backward',
-    (tester) async {
-      await tester.pumpWidget(const QuranMemorizationApp());
+    // Scroll to direction buttons.
+    await scrollToResults(tester, find.text('From the last page'));
 
       // Default forward mode starts at page 1.
       expect(find.widgetWithText(TextField, '1'), findsOneWidget);
