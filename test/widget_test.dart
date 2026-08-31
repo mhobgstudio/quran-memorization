@@ -69,6 +69,7 @@ void main() {
       // Default forward mode starts at page 1.
       expect(find.widgetWithText(TextField, '1'), findsOneWidget);
 
+      await scrollToResults(tester, find.text('From the last page'));
       await tester.tap(find.text('From the last page'));
       await tester.pumpAndSettle();
 
@@ -90,10 +91,12 @@ void main() {
   ) async {
     await tester.pumpWidget(const QuranMemorizationApp());
 
+    await scrollToResults(tester, find.text('From the last page'));
     await tester.tap(find.text('From the last page'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(TextField, '604'), findsOneWidget);
 
+    await scrollToResults(tester, find.text('From the first page'));
     await tester.tap(find.text('From the first page'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(TextField, '1'), findsOneWidget);

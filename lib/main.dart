@@ -1,7 +1,12 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'memorization_calc.dart';
+import 'data/encouraging_verses.dart';
 import 'screens/page_viewer_screen.dart';
 import 'services/audio_settings.dart';
 import 'services/audio_unit_controller.dart';
@@ -476,6 +481,11 @@ class _PlannerScreenState extends State<PlannerScreen> {
 
   // -- Plan management --
 
+  /// The date the user wants to finish memorization by, if set.
+  DateTime? _targetDate;
+
+
+
   void _switchPlan(int index) {
     if (index == _savedPlans.activeIndex) return;
     setState(() {
@@ -501,6 +511,67 @@ class _PlannerScreenState extends State<PlannerScreen> {
       ..clear()
       ..addAll(plan.restWeekdays);
     _startDate = plan.startDate;
+  }
+
+  Widget _planChip(SavedPlan plan, int index, ColorScheme scheme) {
+    final isSelected = index == _savedPlans.activeIndex;
+    // Calculate progress for this plan.
+    final remaining = plan.direction == MemorizationDirection.forward
+        ? (MemorizationPlan.totalPages - plan.page + 1)
+        : plan.page;
+    final completed = MemorizationPlan.totalPages - remaining;
+    final progress = (completed / MemorizationPlan.totalPages * 100).round();
+
+    final isSynced = plan.syncGroup != null;
+
+    return ChoiceChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isSynced)
+            Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.sync,
+                size: 14,
+                color: isSelected
+                    ? scheme.onPrimaryContainer.withValues(alpha: 0.8)
+                    : scheme.primary.withValues(alpha: 0.7),
+              ),
+            ),
+          Text('${plan.name} '),
+          Text(
+            '$progress%',
+            style: TextStyle(
+              fontSize: 11,
+              color: isSelected
+                  ? scheme.onPrimaryContainer.withValues(alpha: 0.7)
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+          ),
+        ],
+      ),
+      selected: isSelected,
+      onSelected: (_) => _switchPlan(index),
+    );
+  }
+
+  void _duplicateCurrentPlan() {
+    final current = _savedPlans.active;
+    if (current == null) return;
+    final duplicate = SavedPlan(
+      name: '${current.name} (copy)',
+      page: current.page,
+      rate: current.rate,
+      rateIsLines: current.rateIsLines,
+      direction: current.direction,
+      restWeekdays: current.restWeekdays,
+      startDate: current.startDate,
+    );
+    setState(() {
+      _savedPlans = _savedPlans.addPlan(duplicate.name, from: duplicate);
+    });
+    _savedPlans.save();
   }
 
   Future<void> _createNewPlan() async {
@@ -570,6 +641,65 @@ class _PlannerScreenState extends State<PlannerScreen> {
         ],
       ),
     );
+  }
+
+  /// Shows a dialog to pick which plan to sync with (or unsync from).
+  void _toggleSyncWithNext() {
+    final current = _savedPlans.active;
+    if (current == null) return;
+
+    if (current.syncGroup != null) {
+      // Currently synced → offer to unsync.
+      setState(() {
+        _savedPlans = _savedPlans.toggleSync(
+          _savedPlans.activeIndex,
+          otherIndex: _savedPlans.activeIndex,
+        );
+      });
+      _savedPlans.save();
+      return;
+    }
+
+    // Not synced → show picker to select which plan to sync with.
+    final otherPlans = [
+      for (var i = 0; i < _savedPlans.plans.length; i++)
+        if (i != _savedPlans.activeIndex) (i, _savedPlans.plans[i].name),
+    ];
+
+    if (otherPlans.isEmpty) return;
+
+    showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Sync with which plan?'),
+        children: [
+          for (final (idx, name) in otherPlans)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(idx),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.sync,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(name),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ).then((otherIndex) {
+      if (otherIndex == null || !mounted) return;
+      setState(() {
+        _savedPlans = _savedPlans.toggleSync(
+          _savedPlans.activeIndex,
+          otherIndex: otherIndex,
+        );
+      });
+      _savedPlans.save();
+    });
   }
 
   Future<String?> _showPlanNameDialog({
@@ -684,6 +814,12 @@ class _PlannerScreenState extends State<PlannerScreen> {
               children: [
                 // Plan selector
                 _planSelectorCard(scheme),
+                const SizedBox(height: 12),
+                if (_savedPlans.plans.length >= 2) ...[
+                  _compareButton(scheme),
+                  const SizedBox(height: 12),
+                ],
+                _motivationalQuoteCard(scheme),
                 const SizedBox(height: 12),
                 _sectionCard(
                   title: 'Current page',
@@ -918,6 +1054,12 @@ class _PlannerScreenState extends State<PlannerScreen> {
                 const SizedBox(height: 16),
                 _resultsCard(plan, scheme),
                 const SizedBox(height: 16),
+                _goalCard(plan, scheme),
+                const SizedBox(height: 16),
+                _heatmapCard(scheme),
+                const SizedBox(height: 16),
+                _sessionHistoryCard(scheme),
+                const SizedBox(height: 16),
                 _estimationHintsCard(scheme),
                 const SizedBox(height: 16),
               ],
@@ -932,7 +1074,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
   Widget _planSelectorCard(ColorScheme scheme) {
     final textTheme = Theme.of(context).textTheme;
     final plans = _savedPlans.plans;
-    final activeIndex = _savedPlans.activeIndex;
+
     // If no plans yet, show a prompt to create one.
     if (plans.isEmpty) {
       return Card(
@@ -1005,6 +1147,10 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       if (value == 0) {
                         _renameCurrentPlan();
                       } else if (value == 1) {
+                        _duplicateCurrentPlan();
+                      } else if (value == 2) {
+                        _toggleSyncWithNext();
+                      } else if (value == 3) {
                         _deleteCurrentPlan();
                       }
                     },
@@ -1019,6 +1165,30 @@ class _PlannerScreenState extends State<PlannerScreen> {
                       ),
                       PopupMenuItem(
                         value: 1,
+                        child: const ListTile(
+                          leading: Icon(Icons.copy_outlined),
+                          title: Text('Duplicate'),
+                          dense: true,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 2,
+                        child: ListTile(
+                          leading: Icon(
+                            _savedPlans.active?.syncGroup != null
+                                ? Icons.sync_disabled
+                                : Icons.sync,
+                          ),
+                          title: Text(
+                            _savedPlans.active?.syncGroup != null
+                                ? 'Unsync plan'
+                                : 'Sync with another plan',
+                          ),
+                          dense: true,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 3,
                         enabled: plans.length > 1,
                         child: ListTile(
                           leading: Icon(
@@ -1043,11 +1213,7 @@ class _PlannerScreenState extends State<PlannerScreen> {
               runSpacing: 8,
               children: [
                 for (var i = 0; i < plans.length; i++)
-                  ChoiceChip(
-                    label: Text(plans[i].name),
-                    selected: i == activeIndex,
-                    onSelected: (_) => _switchPlan(i),
-                  ),
+                  _planChip(plans[i], i, scheme),
               ],
             ),
           ],
@@ -1170,6 +1336,31 @@ class _PlannerScreenState extends State<PlannerScreen> {
       );
     });
     _log.save();
+
+    // Sync other plans in the same group.
+    final activeIndex = _savedPlans.activeIndex;
+    final syncIndices = _savedPlans.syncGroupIndices(activeIndex);
+    if (syncIndices.length > 1) {
+      // Calculate page delta based on the active plan's direction.
+      final pagesPerDay = _rateMode == RateMode.lines
+          ? (_rate ?? 10) / MemorizationPlan.linesPerPage
+          : (_rate ?? (2 / 3));
+      final pageDelta = pagesPerDay.round();
+      final linesDelta = _effectiveLinesPerDay();
+
+      setState(() {
+        _savedPlans = _savedPlans.syncGroupProgress(
+          sourceIndex: activeIndex,
+          pageDelta: pageDelta,
+          linesDelta: linesDelta,
+          sourceDirection: _direction,
+        );
+      });
+      _savedPlans.save();
+
+      // Reload fields if we switched plan state.
+      _loadPlanIntoFields(_savedPlans.active);
+    }
   }
 
   void _undoToday() {
@@ -1503,6 +1694,621 @@ class _PlannerScreenState extends State<PlannerScreen> {
     );
   }
 
+  // ── Plan comparison ──────────────────────────────────────────────
+
+  /// Button that opens the comparison bottom sheet.
+  Widget _compareButton(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: _openComparisonSheet,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.compare_arrows, color: scheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Compare plans',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: scheme.onSurfaceVariant,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the bottom sheet with a side-by-side comparison of two plans.
+  Future<void> _openComparisonSheet() async {
+    final plans = _savedPlans.plans;
+    if (plans.length < 2) return;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ComparisonSheet(
+        plans: plans,
+        activeIndex: _savedPlans.activeIndex,
+      ),
+    );
+  }
+
+  // ── Motivational quote card ──────────────────────────────────────
+
+  /// Rotating Quran verse or hadith quote that changes each time the
+  /// app is opened, providing spiritual encouragement.
+  Widget _motivationalQuoteCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final quote = rotatingQuote();
+
+    return Card(
+      elevation: 0,
+      color: scheme.tertiaryContainer.withValues(alpha: 0.5),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  quote.isHadith ? Icons.auto_stories : Icons.format_quote,
+                  color: scheme.onTertiaryContainer.withValues(alpha: 0.7),
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  quote.isHadith ? 'Hadith' : 'Qur\u02ban',
+                  style: textTheme.labelSmall?.copyWith(
+                    color: scheme.onTertiaryContainer.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  quote.reference,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: scheme.onTertiaryContainer.withValues(alpha: 0.5),
+                  ),
+                ),
+              ],
+            ),
+            if (quote.arabic.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                quote.arabic,
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                  fontFamily: 'UthmanicHafs',
+                  fontSize: 18,
+                  height: 1.8,
+                  color: scheme.onTertiaryContainer,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              quote.translation,
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onTertiaryContainer.withValues(alpha: 0.9),
+                fontStyle: FontStyle.italic,
+                height: 1.5,
+              ),
+            ),
+            if (quote.narrator != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                quote.narrator!,
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onTertiaryContainer.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Goal card ──────────────────────────────────────────────────────
+
+  /// Lets the user pick a target finish date and shows the required pace.
+  Widget _goalCard(MemorizationPlan? plan, ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final page = _page;
+    if (page == null) return const SizedBox.shrink();
+
+    final targetDate = _targetDate;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Calculate what's needed.
+    final remaining = _direction == MemorizationDirection.forward
+        ? (MemorizationPlan.totalPages - page + 1).toDouble()
+        : page.toDouble();
+    String? requiredPace;
+    if (targetDate != null) {
+      final daysLeft = targetDate.difference(today).inDays;
+      if (daysLeft > 0) {
+        final pagesPerDay = remaining / daysLeft;
+        final linesPerDay = pagesPerDay * MemorizationPlan.linesPerPage;
+        requiredPace =
+            '${_trim(pagesPerDay)} pages/day (${_trim(linesPerDay)} lines/day)';
+      }
+    }
+
+    final isSet = targetDate != null;
+    final daysUntil = isSet ? targetDate.difference(today).inDays : 0;
+    final isPast = isSet && daysUntil < 0;
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.flag,
+                  color: isSet ? scheme.primary : scheme.onSurfaceVariant,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Finish by',
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (isSet)
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _targetDate = null);
+                    },
+                    child: const Text('Clear'),
+                  ),
+                FilledButton.tonal(
+                  onPressed: _pickTargetDate,
+                  child: Text(isSet ? 'Change' : 'Set a target'),
+                ),
+              ],
+            ),
+            if (!isSet) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Set a target date to see the pace needed to finish on time.',
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (isSet) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _goalStat(
+                    formatDate(targetDate),
+                    'Target date',
+                    scheme,
+                    isError: isPast,
+                  ),
+                  const SizedBox(width: 12),
+                  _goalStat(
+                    isPast
+                        ? 'Overdue by ${-daysUntil} day${daysUntil == -1 ? '' : 's'}'
+                        : daysUntil == 0
+                        ? 'Today!'
+                        : '$daysUntil day${daysUntil == 1 ? '' : 's'} left',
+                    'Time remaining',
+                    scheme,
+                    isError: isPast,
+                    isHighlight: daysUntil >= 0 && daysUntil <= 30,
+                  ),
+                ],
+              ),
+              if (requiredPace != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isPast
+                        ? scheme.errorContainer
+                        : scheme.tertiaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isPast ? Icons.warning_amber : Icons.speed,
+                        size: 18,
+                        color: isPast
+                            ? scheme.onErrorContainer
+                            : scheme.onTertiaryContainer,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          isPast
+                              ? 'Target date is in the past'
+                              : 'Required pace: $requiredPace',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: isPast
+                                ? scheme.onErrorContainer
+                                : scheme.onTertiaryContainer,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!isPast)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: FilledButton.tonal(
+                      onPressed: () => _applyGoalPace(),
+                      child: const Text('Apply this pace to my plan'),
+                    ),
+                  ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _goalStat(String value, String label, ColorScheme scheme,
+      {bool isError = false, bool isHighlight = false}) {
+    final textTheme = Theme.of(context).textTheme;
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: isError
+                  ? scheme.error
+                  : isHighlight
+                  ? scheme.primary
+                  : null,
+            ),
+          ),
+          Text(
+            label,
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _applyGoalPace() {
+    final page = _page;
+    final targetDate = _targetDate;
+    if (page == null || targetDate == null) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final daysLeft = targetDate.difference(today).inDays;
+    if (daysLeft <= 0) return;
+    final remaining = _direction == MemorizationDirection.forward
+        ? (MemorizationPlan.totalPages - page + 1).toDouble()
+        : page.toDouble();
+    final pagesPerDay = remaining / daysLeft;
+    _applyPace(pagesPerDay);
+  }
+
+  Future<void> _pickTargetDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate:
+          _targetDate ?? DateTime(now.year + 1, now.month, now.day),
+      firstDate: now,
+      lastDate: DateTime(now.year + 10),
+      helpText: 'When do you want to finish?',
+    );
+    if (picked != null && mounted) {
+      setState(() => _targetDate = DateTime(picked.year, picked.month, picked.day));
+    }
+  }
+
+  // ── Heatmap card ───────────────────────────────────────────────────
+
+  /// GitHub-style mini heatmap showing memorization days over the last 28 days.
+  Widget _heatmapCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Last 28 days (4 weeks).
+    final days = <DateTime>[];
+    for (var i = 27; i >= 0; i--) {
+      days.add(DateTime(today.year, today.month, today.day - i));
+    }
+
+    // Map of date → session lines (0 if no session).
+    final sessionMap = <DateTime, double>{};
+    for (final s in _log.sessions) {
+      final d = DateTime(s.date.year, s.date.month, s.date.day);
+      sessionMap[d] = (sessionMap[d] ?? 0) + s.lines;
+    }
+
+    // Find max lines for intensity scaling.
+    var maxLines = 0.0;
+    for (final v in sessionMap.values) {
+      if (v > maxLines) maxLines = v;
+    }
+
+    final activeDays = sessionMap.length;
+    final totalDaysInPeriod = 28;
+    final completionRate = ((activeDays / totalDaysInPeriod) * 100).round();
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.grid_view_rounded, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Last 4 weeks',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$completionRate% days active',
+                    style: textTheme.labelSmall?.copyWith(
+                      color: scheme.onSecondaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // 4 rows × 7 columns grid.
+            for (var row = 0; row < 4; row++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    for (var col = 0; col < 7; col++)
+                      _heatmapCell(
+                        days[row * 7 + col],
+                        sessionMap,
+                        maxLines,
+                        scheme,
+                      ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 4),
+            // Day labels.
+            Row(
+              children: [
+                for (final label in ['M', 'T', 'W', 'T', 'F', 'S', 'S'])
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        label,
+                        style: textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _heatmapCell(
+    DateTime date,
+    Map<DateTime, double> sessions,
+    double maxLines,
+    ColorScheme scheme,
+  ) {
+    final lines = sessions[date] ?? 0;
+    final hasSession = lines > 0;
+    final intensity = maxLines > 0 ? (lines / maxLines).clamp(0.2, 1.0) : 0.0;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final isToday = date == today;
+
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(1.5),
+        child: Tooltip(
+          message:
+              '${date.month}/${date.day}${hasSession ? ' \u2014 ${_trim(lines)} lines' : ''}',
+          child: Container(
+            height: 24,
+            decoration: BoxDecoration(
+              color: hasSession
+                  ? scheme.primary.withValues(alpha: intensity)
+                  : scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(4),
+              border: isToday
+                  ? Border.all(color: scheme.primary, width: 1.5)
+                  : null,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Session history card ───────────────────────────────────────────
+
+  /// Scrollable list of recent memorization sessions.
+  Widget _sessionHistoryCard(ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    final sessions = _log.allSessions;
+
+    return Card(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.history, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Session history',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                if (sessions.isNotEmpty)
+                  Text(
+                    '${sessions.length} session${sessions.length == 1 ? '' : 's'}',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (sessions.isEmpty)
+              Text(
+                'No sessions recorded yet. Mark your first day done above!',
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              )
+            else
+              ...sessions.take(14).map((s) => _sessionRow(s, scheme)),
+            if (sessions.length > 14)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Center(
+                  child: Text(
+                    '… and ${sessions.length - 14} more',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sessionRow(MemorizationSession s, ColorScheme scheme) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _shortDate(s.date),
+              style: textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Text(
+            'page ${s.page}',
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: scheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '${_trim(s.lines)} lines',
+              style: textTheme.labelSmall?.copyWith(
+                color: scheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Common memorization paces with estimated finish times, so the user
   /// can quickly see "if I memorize at this rate, when will I finish?".
   Widget _estimationHintsCard(ColorScheme scheme) {
@@ -1675,5 +2481,487 @@ class _PlannerScreenState extends State<PlannerScreen> {
         ),
       ),
     );
+  }
+}
+
+// ── Comparison bottom sheet ────────────────────────────────────────
+
+class _ComparisonSheet extends StatefulWidget {
+  const _ComparisonSheet({
+    required this.plans,
+    required this.activeIndex,
+  });
+
+  final List<SavedPlan> plans;
+  final int activeIndex;
+
+  @override
+  State<_ComparisonSheet> createState() => _ComparisonSheetState();
+}
+
+class _ComparisonSheetState extends State<_ComparisonSheet> {
+  late int _planA;
+  late int _planB;
+  final GlobalKey _captureKey = GlobalKey();
+  bool _sharing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _planA = widget.activeIndex;
+    // Pick the next plan as plan B, or the first if active is the last.
+    _planB = (widget.activeIndex + 1) % widget.plans.length;
+  }
+
+  /// Builds a MemorizationPlan from a SavedPlan, returning null on invalid.
+  MemorizationPlan? _buildPlan(SavedPlan saved) {
+    final pagesPerDay = saved.rateIsLines
+        ? saved.rate / MemorizationPlan.linesPerPage
+        : saved.rate;
+    try {
+      return MemorizationPlan(
+        currentPage: saved.page,
+        pagesPerDay: pagesPerDay,
+        restWeekdays: saved.restWeekdays,
+        startDate: saved.startDate,
+        direction: saved.direction,
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final planAData = widget.plans[_planA];
+    final planBData = widget.plans[_planB];
+    final planA = _buildPlan(planAData);
+    final planB = _buildPlan(planBData);
+    final resultA = planA?.compute();
+    final resultB = planB?.compute();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) => Scaffold(
+        appBar: AppBar(
+          title: const Text('Compare Plans'),
+          centerTitle: false,
+          actions: [
+            if (!_sharing)
+              IconButton(
+                icon: const Icon(Icons.share),
+                tooltip: 'Share as image',
+                onPressed: _shareAsImage,
+              ),
+            if (_sharing)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+          ],
+        ),
+        body: ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Plan selectors
+            Row(
+              children: [
+                Expanded(
+                  child: _planDropdown(
+                    label: 'Plan A',
+                    value: _planA,
+                    onChanged: (v) => setState(() => _planA = v!),
+                    scheme: scheme,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(
+                    Icons.compare_arrows,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                Expanded(
+                  child: _planDropdown(
+                    label: 'Plan B',
+                    value: _planB,
+                    onChanged: (v) => setState(() => _planB = v!),
+                    scheme: scheme,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Wrap comparison content in RepaintBoundary for image capture
+            RepaintBoundary(
+              key: _captureKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header for the captured image
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.compare_arrows, color: scheme.onPrimaryContainer),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Plan Comparison',
+                          style: textTheme.titleMedium?.copyWith(
+                            color: scheme.onPrimaryContainer,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+            // Side-by-side stats
+            if (planA == null || planB == null)
+              Card(
+                elevation: 0,
+                color: scheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'One or both plans have invalid settings. '
+                    'Check page numbers and daily rates.',
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: scheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+              )
+            else ...[
+              _comparisonRow(
+                'Start page',
+                '${planAData.page}',
+                '${planBData.page}',
+                scheme,
+                isPage: true,
+              ),
+              _comparisonRow(
+                'Direction',
+                planAData.direction == MemorizationDirection.forward
+                    ? 'Forward'
+                    : 'Backward',
+                planBData.direction == MemorizationDirection.forward
+                    ? 'Forward'
+                    : 'Backward',
+                scheme,
+              ),
+              _comparisonRow(
+                'Daily rate',
+                _formatRate(planAData),
+                _formatRate(planBData),
+                scheme,
+              ),
+              _comparisonRow(
+                'Rest days',
+                planAData.restWeekdays.isEmpty
+                    ? 'None'
+                    : '${planAData.restWeekdays.length} days/week',
+                planBData.restWeekdays.isEmpty
+                    ? 'None'
+                    : '${planBData.restWeekdays.length} days/week',
+                scheme,
+              ),
+              _comparisonRow(
+                'Start date',
+                planAData.startDate == null
+                    ? 'Today'
+                    : formatDate(planAData.startDate!),
+                planBData.startDate == null
+                    ? 'Today'
+                    : formatDate(planBData.startDate!),
+                scheme,
+              ),
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 12),
+
+              // Finish date comparison
+              _comparisonRow(
+                'Finish date',
+                formatDate(resultA!.finishDate),
+                formatDate(resultB!.finishDate),
+                scheme,
+                isHighlight: true,
+              ),
+              _comparisonRow(
+                'Calendar days',
+                '${resultA.calendarDays}',
+                '${resultB.calendarDays}',
+                scheme,
+              ),
+              _comparisonRow(
+                'Study sessions',
+                '${resultA.studyDays}',
+                '${resultB.studyDays}',
+                scheme,
+              ),
+              _comparisonRow(
+                'Pages remaining',
+                _trim(planA.remainingPages),
+                _trim(planB.remainingPages),
+                scheme,
+              ),
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 12),
+
+              // Progress
+              _comparisonRow(
+                'Progress',
+                '${(planA.progressBeforeCurrentPage * 100).round()}%',
+                '${(planB.progressBeforeCurrentPage * 100).round()}%',
+                scheme,
+                isHighlight: true,
+              ),
+
+              // Winner badge
+              const SizedBox(height: 16),
+              _winnerBadge(
+                planA: planA,
+                planB: planB,
+                nameA: planAData.name,
+                nameB: planBData.name,
+                scheme: scheme,
+                textTheme: textTheme,
+              ),
+            ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Captures the comparison content as an image and shares it.
+  Future<void> _shareAsImage() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+
+    try {
+      final boundary = _captureKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        setState(() => _sharing = false);
+        return;
+      }
+
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        setState(() => _sharing = false);
+        return;
+      }
+
+      final buffer = byteData.buffer.asUint8List();
+
+      // Share using share_plus v10 API.
+      final xFile = XFile.fromData(
+        buffer,
+        mimeType: 'image/png',
+        name: 'plan_comparison.png',
+      );
+
+      await Share.shareXFiles(
+        [xFile],
+        subject: 'Plan Comparison',
+        text: 'Check out my Quran memorization plan comparison!',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not share image: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  Widget _planDropdown({
+    required String label,
+    required int value,
+    required ValueChanged<int?> onChanged,
+    required ColorScheme scheme,
+  }) {
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      items: [
+        for (var i = 0; i < widget.plans.length; i++)
+          DropdownMenuItem(
+            value: i,
+            child: Text(widget.plans[i].name),
+          ),
+      ],
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _comparisonRow(
+    String label,
+    String valueA,
+    String valueB,
+    ColorScheme scheme, {
+    bool isHighlight = false,
+    bool isPage = false,
+  }) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: isHighlight
+                    ? scheme.primaryContainer.withValues(alpha: 0.5)
+                    : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                valueA,
+                textAlign: TextAlign.center,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: isHighlight ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: isHighlight
+                    ? scheme.primaryContainer.withValues(alpha: 0.5)
+                    : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                valueB,
+                textAlign: TextAlign.center,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: isHighlight ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows which plan finishes first or has the most progress.
+  Widget _winnerBadge({
+    required MemorizationPlan planA,
+    required MemorizationPlan planB,
+    required String nameA,
+    required String nameB,
+    required ColorScheme scheme,
+    required TextTheme textTheme,
+  }) {
+    final resultA = planA.compute();
+    final resultB = planB.compute();
+    final aFinishesFirst = resultA.finishDate.isBefore(resultB.finishDate);
+    final sameFinish = resultA.finishDate == resultB.finishDate;
+
+    String message;
+    if (sameFinish) {
+      message = 'Both plans finish on the same date.';
+    } else if (aFinishesFirst) {
+      final diff = resultB.finishDate.difference(resultA.finishDate).inDays;
+      message = '$nameA finishes $diff day${diff == 1 ? '' : 's'} before $nameB.';
+    } else {
+      final diff = resultA.finishDate.difference(resultB.finishDate).inDays;
+      message = '$nameB finishes $diff day${diff == 1 ? '' : 's'} before $nameA.';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: sameFinish
+            ? scheme.secondaryContainer
+            : scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            sameFinish ? Icons.handshake : Icons.emoji_events,
+            color: sameFinish
+                ? scheme.onSecondaryContainer
+                : scheme.onPrimaryContainer,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: textTheme.bodyMedium?.copyWith(
+                color: sameFinish
+                    ? scheme.onSecondaryContainer
+                    : scheme.onPrimaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatRate(SavedPlan plan) {
+    if (plan.rateIsLines) {
+      final pagesPerDay = plan.rate / MemorizationPlan.linesPerPage;
+      return '${plan.rate} lines/day (${pagesPerDay.toStringAsFixed(1)} pages)';
+    }
+    return '${plan.rate} pages/day (${(plan.rate * MemorizationPlan.linesPerPage).toStringAsFixed(0)} lines)';
+  }
+
+  static String _trim(double value) {
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
   }
 }

@@ -4,17 +4,24 @@ import 'package:quran_memorization/data/encouraging_verses.dart';
 void main() {
   group('kEncouragingVerses', () {
     test(
-      'is non-empty and every entry has reference, arabic and translation',
+      'is non-empty and every entry has reference and translation',
       () {
         expect(kEncouragingVerses, isNotEmpty);
         for (final v in kEncouragingVerses) {
-          expect(
-            RegExp(r'^\d+:\d+$').hasMatch(v.reference),
-            isTrue,
-            reason: 'reference should be "surah:ayah", got ${v.reference}',
-          );
-          expect(v.arabic.trim(), isNotEmpty);
-          expect(v.translation.trim(), isNotEmpty);
+          expect(v.reference.trim(), isNotEmpty,
+              reason: 'reference must not be empty');
+          expect(v.translation.trim(), isNotEmpty,
+              reason: 'translation must not be empty');
+          if (!v.isHadith) {
+            // Quran verses should have Arabic text and a surah:ayah reference.
+            expect(v.arabic.trim(), isNotEmpty,
+                reason: 'Quran verse ${v.reference} must have Arabic text');
+            expect(
+              RegExp(r'^\d+:\d+(-\d+)?$').hasMatch(v.reference),
+              isTrue,
+              reason: 'Quran reference should be "surah:ayah" or "surah:ayah-ayah", got ${v.reference}',
+            );
+          }
         }
       },
     );

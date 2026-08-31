@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../memorization_calc.dart' show MemorizationDirection;
+import '../memorization_calc.dart' show MemorizationDirection, MemorizationPlan;
 
 /// A named memorization plan that can be saved, loaded, and switched between.
 ///
@@ -15,6 +15,7 @@ class SavedPlan {
     this.direction = MemorizationDirection.forward,
     this.restWeekdays = const {},
     this.startDate,
+    this.syncGroup,
   });
 
   /// User-chosen name for this plan.
@@ -38,6 +39,11 @@ class SavedPlan {
   /// When the plan starts (date only); null means today.
   final DateTime? startDate;
 
+  /// Optional sync group name. Plans in the same group share progress:
+  /// when one plan advances, all plans in the group advance by the same
+  /// amount. Null means the plan is independent (not synced).
+  final String? syncGroup;
+
   SavedPlan copyWith({
     String? name,
     int? page,
@@ -47,6 +53,8 @@ class SavedPlan {
     Set<int>? restWeekdays,
     DateTime? startDate,
     bool clearStartDate = false,
+    String? syncGroup,
+    bool clearSyncGroup = false,
   }) {
     return SavedPlan(
       name: name ?? this.name,
@@ -56,12 +64,13 @@ class SavedPlan {
       direction: direction ?? this.direction,
       restWeekdays: restWeekdays ?? this.restWeekdays,
       startDate: clearStartDate ? null : (startDate ?? this.startDate),
+      syncGroup: clearSyncGroup ? null : (syncGroup ?? this.syncGroup),
     );
   }
 
   /// Encodes this plan to a compact string for storage.
   ///
-  /// Format: "name|page|rate|rateIsLines|direction|restWeekdays|startDate"
+  /// Format: "name|page|rate|rateIsLines|direction|restWeekdays|startDate|syncGroup"
   String encode() {
     final y = startDate?.year.toString().padLeft(4, '0') ?? '';
     final m = startDate?.month.toString().padLeft(2, '0') ?? '';
@@ -76,6 +85,7 @@ class SavedPlan {
       direction.name,
       restStr.join(','),
       startStr,
+      syncGroup ?? '',
     ].join('|');
   }
 
@@ -109,6 +119,7 @@ class SavedPlan {
         }
       }
     }
+    final syncGroup = parts.length > 7 && parts[7].isNotEmpty ? parts[7] : null;
     if (page == null || rate == null) return null;
     return SavedPlan(
       name: name,
@@ -118,6 +129,7 @@ class SavedPlan {
       direction: direction,
       restWeekdays: restWeekdays,
       startDate: startDate,
+      syncGroup: syncGroup,
     );
   }
 }
@@ -210,6 +222,94 @@ class SavedPlans {
   SavedPlans select(int index) {
     if (index < 0 || index >= plans.length) return this;
     return SavedPlans(plans: plans, activeIndex: index);
+  }
+
+  /// All plans in the same sync group as [planIndex].
+  List<int> syncGroupIndices(int planIndex) {
+    if (planIndex < 0 || planIndex >= plans.length) return [];
+    final group = plans[planIndex].syncGroup;
+    if (group == null) return [planIndex];
+    return [
+      for (var i = 0; i < plans.length; i++)
+        if (plans[i].syncGroup == group) i,
+    ];
+  }
+
+  /// Syncs all plans in the same group as [planIndex]: each plan's page
+  /// advances by [pageDelta] and each plan's lines by [linesDelta].
+  /// Plans whose direction differs from [sourceDirection] advance in
+  /// their own direction. Returns a new [SavedPlans].
+  SavedPlans syncGroupProgress({
+    required int sourceIndex,
+    required int pageDelta,
+    required double linesDelta,
+    required MemorizationDirection sourceDirection,
+  }) {
+    final source = plans[sourceIndex];
+    final group = source.syncGroup;
+    if (group == null) return this;
+
+    final updated = List<SavedPlan>.from(plans);
+    for (var i = 0; i < updated.length; i++) {
+      if (i == sourceIndex) continue; // source already advanced
+      if (updated[i].syncGroup != group) continue;
+
+      // Advance this plan by the same page delta.
+      final newPage = (updated[i].page + pageDelta)
+          .clamp(1, MemorizationPlan.totalPages);
+      updated[i] = updated[i].copyWith(page: newPage);
+    }
+    return SavedPlans(plans: updated, activeIndex: activeIndex);
+  }
+
+  /// Gets the sync group name for a plan, or creates a new unique one.
+  static String _nextGroupName(List<SavedPlan> plans) {
+    var n = 1;
+    while (plans.any((p) => p.syncGroup == 'Group $n')) {
+      n++;
+    }
+    return 'Group $n';
+  }
+
+  /// Toggles the sync group for a plan. If the plan is not in a group,
+  /// it joins the group of [otherIndex]. If it is in a group, it leaves.
+  SavedPlans toggleSync(int index, {required int otherIndex}) {
+    final plan = plans[index];
+    final other = plans[otherIndex];
+
+    if (plan.syncGroup == other.syncGroup && plan.syncGroup != null) {
+      // Already in the same group → remove from group.
+      if (syncGroupIndices(index).length <= 2) {
+        // Only 2 plans in group → dissolve the group entirely.
+        final updated = List<SavedPlan>.from(plans);
+        for (var i = 0; i < updated.length; i++) {
+          if (updated[i].syncGroup == plan.syncGroup) {
+            updated[i] = updated[i].copyWith(clearSyncGroup: true);
+          }
+        }
+        return SavedPlans(plans: updated, activeIndex: activeIndex);
+      } else {
+        return updatePlan(index, syncGroup: null, clearSyncGroup: true);
+      }
+    }
+
+    // Join the other plan's group (or create a new group).
+    final targetGroup = other.syncGroup ?? _nextGroupName(plans);
+    return updatePlan(index, syncGroup: targetGroup);
+  }
+
+  /// Updates a specific plan's settings by index.
+  SavedPlans updatePlan(
+    int index, {
+    String? syncGroup,
+    bool clearSyncGroup = false,
+  }) {
+    final updated = List<SavedPlan>.from(plans);
+    updated[index] = updated[index].copyWith(
+      syncGroup: syncGroup,
+      clearSyncGroup: clearSyncGroup,
+    );
+    return SavedPlans(plans: updated, activeIndex: activeIndex);
   }
 
   // -- Persistence keys --

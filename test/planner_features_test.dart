@@ -104,9 +104,11 @@ void main() {
     await tester.pumpWidget(const QuranMemorizationApp());
     await tester.pump();
 
+    await scrollTo(tester, find.text('Plan starts'));
     expect(find.text('Plan starts'), findsOneWidget);
     expect(find.textContaining('Today ('), findsOneWidget);
 
+    await scrollTo(tester, find.text('Change date'));
     await tester.tap(find.text('Change date'));
     await tester.pumpAndSettle();
     expect(find.text('When does your plan start?'), findsOneWidget);
